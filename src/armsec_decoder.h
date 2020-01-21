@@ -68,6 +68,9 @@ typedef struct _TargetAddresses {
    void* address_container;
 } TargetAddresses;
 
+DLL_API void* create_processor();
+DLL_API void free_processor(void* processor);
+
 DLL_API bool armsec_next_targets(char* instruction_buffer, size_t buffer_size,
       uint64_t address, TargetAddresses target_addresses,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,

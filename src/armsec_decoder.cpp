@@ -1,6 +1,7 @@
 #include "armsec_decoder.h"
 #include "unisim/component/cxx/processor/arm/disasm.hh"
 #include "unisim/component/cxx/processor/arm/psr.hh"
+#include "unisim/util/identifier/identifier.hh"
 #include "top_thumb.tcc"
 
 #include <cassert>
@@ -14,7 +15,50 @@
 // template <typename ARCH> struct TypeFor<ARCH,32> { typedef typename ARCH::S32 S; typedef typename ARCH::U32 U; typedef typename ARCH::F32 F; };
 // template <typename ARCH> struct TypeFor<ARCH,64> { typedef typename ARCH::S64 S; typedef typename ARCH::U64 U; typedef typename ARCH::F64 F; };
 
+template <bool test> struct StaticAssert {};
+template <> struct StaticAssert<true> { static void check() {}; };
+
+struct ScalarType
+{
+  enum id_t { VOID, BOOL, U8, U16, U32, U64, S8, S16, S32, S64, F32, F64 };
+  static id_t IntegerType( bool is_signed, unsigned bits )
+  {
+    switch (bits) {
+    default: throw VOID;
+    case 8:  return is_signed ? S8 :  U8;
+    case 16: return is_signed ? S16 : U16;
+    case 32: return is_signed ? S32 : U32;
+    case 64: return is_signed ? S64 : U64;
+    }
+    return VOID;
+  }
+  ScalarType( id_t id )
+    : name(0), bitsize(0), is_signed(false), is_integer(false)
+  {
+    switch (id)
+      {
+      case VOID: bitsize = 0;  is_integer = false; is_signed = false; name = "VOID"; break;
+      case BOOL: bitsize = 1;  is_integer = true;  is_signed = false; name = "BOOL"; break;
+      case U8:   bitsize = 8;  is_integer = true;  is_signed = false; name = "U8";  break;
+      case S8:   bitsize = 8;  is_integer = true;  is_signed = true;  name = "S8";  break;
+      case U16:  bitsize = 16; is_integer = true;  is_signed = false; name = "U16"; break;
+      case S16:  bitsize = 16; is_integer = true;  is_signed = true;  name = "S16"; break;
+      case U32:  bitsize = 32; is_integer = true;  is_signed = false; name = "U32"; break;
+      case S32:  bitsize = 32; is_integer = true;  is_signed = true;  name = "S32"; break;
+      case U64:  bitsize = 64; is_integer = true;  is_signed = false; name = "U64"; break;
+      case S64:  bitsize = 64; is_integer = true;  is_signed = true;  name = "S64"; break;
+      case F32:  bitsize = 32; is_integer = false; is_signed = true;  name = "F32"; break;
+      case F64:  bitsize = 64; is_integer = false; is_signed = true;  name = "F64"; break;
+      }
+  }
+  char const* name;
+  unsigned bitsize;
+  bool is_signed, is_integer;
+};
+  
+
 struct Processor;
+class MemoryState;
 class DomainValue {
   private:
    DomainElement deValue;
@@ -22,12 +66,20 @@ class DomainValue {
    DomainEvaluationEnvironment* peEnv;
 
   protected:
+   friend class MemoryState;
    DomainElement& svalue() { return deValue; }
    const DomainElement& value() const { return deValue; }
-   struct _DomainElementFunctions& functionTable() const { return *pfFunctions; }
+   bool hasFunctionTable() const { return pfFunctions; }
+   struct _DomainElementFunctions& functionTable() const { assert(pfFunctions); return *pfFunctions; }
    DomainEvaluationEnvironment* env() const { return peEnv; }
 
   public:
+   DomainValue() : pfFunctions(nullptr), peEnv(nullptr) {}
+   class Empty {};
+   DomainValue(Empty, const DomainValue& ref)
+      :  deValue(DomainBitElement{}), pfFunctions(ref.pfFunctions), peEnv(ref.peEnv) {}
+   DomainValue(DomainElement&& value, struct _DomainElementFunctions* functions, DomainEvaluationEnvironment* env)
+      :  deValue(std::move(value)), pfFunctions(functions), peEnv(env) {}
    DomainValue(Processor& processor);
    DomainValue(DomainElement&& value, Processor& processor);
    DomainValue(DomainElement&& value, const DomainValue& source)
@@ -41,48 +93,69 @@ class DomainValue {
    DomainValue(const DomainValue& source)
       :  deValue{ nullptr }, pfFunctions(source.pfFunctions),
          peEnv(source.peEnv)
-      {  if (source.deValue.content)
+      {  if (source.deValue.content) {
+            assert(pfFunctions);
             deValue = (*pfFunctions->clone)(source.deValue);
+         }
       }
    DomainValue& operator=(DomainValue&& source)
-      {  assert(pfFunctions == source.pfFunctions && peEnv == source.peEnv);
-         if (this == &source)
+      {  if (this == &source)
             return *this;
-         if (deValue.content)
+         if (deValue.content) {
+            assert(pfFunctions);
             (*pfFunctions->free)(&deValue);
+         }
+         pfFunctions = source.pfFunctions;
+         peEnv = source.peEnv;
          deValue = source.deValue;
          source.deValue.content = nullptr;
          return *this;
       }
    DomainValue& operator=(const DomainValue& source)
-      {  assert(pfFunctions == source.pfFunctions && peEnv == source.peEnv);
-         if (this == &source)
+      {  if (this == &source)
             return *this;
          if (deValue.content)
             (*pfFunctions->free)(&deValue);
-         if (source.deValue.content)
+         pfFunctions = source.pfFunctions;
+         peEnv = source.peEnv;
+         if (source.deValue.content) {
+            assert(pfFunctions);
             deValue = (*pfFunctions->clone)(source.deValue);
+         }
          return *this;
       }
    ~DomainValue()
-      {  if (deValue.content) (*pfFunctions->free)(&deValue); }
+      {  if (deValue.content && pfFunctions) (*pfFunctions->free)(&deValue); }
 
    void clear()
-      {  if (deValue.content)
+      {  if (deValue.content) {
+            assert(pfFunctions);
             (*pfFunctions->free)(&deValue);
+         }
       }
    bool isValid() const { return deValue.content; }
    DomainType getType() const
-      {  return (*pfFunctions->get_type)(deValue); } 
+      {  assert(pfFunctions);
+         return (*pfFunctions->get_type)(deValue);
+      } 
    ZeroResult queryZeroResult() const
-      {  return (*pfFunctions->query_zero_result)(deValue); } 
+      {  assert(pfFunctions);
+         return (*pfFunctions->query_zero_result)(deValue);
+      } 
    int getSizeInBits() const
-      {  return (*pfFunctions->get_size_in_bits)(deValue); } 
+      {  assert(pfFunctions);
+         return (*pfFunctions->get_size_in_bits)(deValue);
+      } 
 };
 
 class DomainMultiBitValue;
 class DomainBitValue : public DomainValue {
   public:
+   DomainBitValue() {}
+   DomainBitValue(Empty empty, const DomainValue& ref)
+      :  DomainValue(empty, ref) {}
+   DomainBitValue(DomainBitElement&& value, struct _DomainElementFunctions* functions, DomainEvaluationEnvironment* env)
+      :  DomainValue(std::move(value), functions, env) {}
    DomainBitValue(Processor& processor);
    DomainBitValue(DomainBitElement&& value, Processor& processor);
    DomainBitValue(DomainBitElement&& value, const DomainValue& source);
@@ -94,11 +167,11 @@ class DomainBitValue : public DomainValue {
    DomainBitValue& operator=(DomainBitValue&& source) = default;
    DomainBitValue& operator=(const DomainBitValue& source) = default;
 
-   void setToConstant(bool value)
-      {  svalue() = (*functionTable().bit_create_constant)(value); }
-   void setToUndefined(bool isSymbolic)
-      {  svalue() = (*functionTable().bit_create_top)(isSymbolic); }
-   DomainMultiBitValue castToMultiBit(int sizeInBits);
+   DomainBitValue& setToConstant(bool value)
+      {  svalue() = (*functionTable().bit_create_constant)(value); return *this; }
+   DomainBitValue& setToUndefined(bool isSymbolic)
+      {  svalue() = (*functionTable().bit_create_top)(isSymbolic); return *this; }
+   DomainMultiBitValue castToMultiBit(int sizeInBits, bool isSigned) const;
 
    DomainBitValue operator~() const
       {  return DomainBitValue((*functionTable().bit_create_unary_apply)
@@ -185,6 +258,11 @@ struct DomainMultiBitValue : public DomainValue {
    bool fSigned;
 
   public:
+   DomainMultiBitValue() : fSigned(false) {}
+   DomainMultiBitValue(Empty empty, const DomainValue& ref)
+      :  DomainValue(empty, ref), fSigned(false) {}
+   DomainMultiBitValue(DomainMultiBitElement&& value, struct _DomainElementFunctions* functions, DomainEvaluationEnvironment* env)
+      :  DomainValue(std::move(value), functions, env), fSigned(false) {}
    DomainMultiBitValue(Processor& processor);
    DomainMultiBitValue(DomainMultiBitElement&& value, Processor& processor, bool isSigned);
    DomainMultiBitValue(DomainMultiBitElement&& value, const DomainValue& source, bool isSigned)
@@ -197,13 +275,15 @@ struct DomainMultiBitValue : public DomainValue {
    DomainMultiBitValue& operator=(DomainMultiBitValue&& source) = default;
    DomainMultiBitValue& operator=(const DomainMultiBitValue& source) = default;
 
-   void setToConstant(DomainIntegerConstant value, bool isSigned)
+   DomainMultiBitValue& setToConstant(DomainIntegerConstant value)
       {  svalue() = (*functionTable().multibit_create_constant)(value);
-         fSigned = isSigned;
+         fSigned = value.isSigned;
+         return *this;
       }
-   void setToUndefined(int sizeInBits, bool isSymbolic, bool isSigned)
+   DomainMultiBitValue& setToUndefined(int sizeInBits, bool isSymbolic, bool isSigned)
       {  svalue() = (*functionTable().multibit_create_top)(sizeInBits, isSymbolic);
          fSigned = isSigned;
+         return *this;
       }
    DomainBitValue castBit()
       {  return DomainBitValue((*functionTable().multibit_create_cast_bit)
@@ -342,6 +422,11 @@ struct DomainMultiBitValue : public DomainValue {
 
 struct DomainMultiFloatValue : public DomainValue {
   public:
+   DomainMultiFloatValue() {}
+   DomainMultiFloatValue(Empty empty, const DomainValue& ref)
+      :  DomainValue(empty, ref) {}
+   DomainMultiFloatValue(DomainMultiFloatElement&& value, struct _DomainElementFunctions* functions, DomainEvaluationEnvironment* env)
+      :  DomainValue(std::move(value), functions, env) {}
    DomainMultiFloatValue(Processor& processor);
    DomainMultiFloatValue(DomainMultiFloatElement&& value, Processor& processor);
    DomainMultiFloatValue(DomainMultiFloatElement&& value, const DomainValue& source)
@@ -428,6 +513,97 @@ struct DomainMultiFloatValue : public DomainValue {
 
    bool isConstant(DomainFloatingPointConstant* value) const
       {  return (*functionTable().multifloat_is_constant_value)(this->value(), value); }
+};
+
+class MemoryState {
+  private:
+   MemoryModel* pmModel;
+   struct _MemoryModelFunctions* pfFunctions;
+   InterpretParameters* pParameters;
+   DomainEvaluationEnvironment* peDomainEnv;
+   mutable unsigned uErrors; /* set of MemoryEvaluationErrorFlags */
+
+  public:
+   MemoryState()
+      :  pmModel(nullptr), pfFunctions(nullptr), pParameters(nullptr),
+         peDomainEnv(nullptr), uErrors(0U) {}
+   MemoryState(Processor& proc);
+
+   bool hasError() const { return uErrors; }
+   const unsigned& errors() const { return uErrors; }
+   void clearErrors() { uErrors = 0U; }
+
+   void setNumberOfRegisters(int number)
+      {  (*pfFunctions->set_number_of_registers)(pmModel, number); }
+   void setRegisterValue(int registerIndex, DomainValue& value)
+      {  (*pfFunctions->set_register_value)(pmModel, registerIndex,
+            &value.svalue(), pParameters, &uErrors);
+      }
+
+   DomainBitValue getRegisterValueAsBit(int registerIndex) const
+      {  DomainElementFunctions* domainFunctions = nullptr; 
+         DomainElement result = (*pfFunctions->get_register_value)
+               (pmModel, registerIndex, pParameters, &uErrors, &domainFunctions);
+         return DomainBitValue(std::move(result), domainFunctions, peDomainEnv);
+      }
+   DomainMultiBitValue getRegisterValueAsMultiBit(int registerIndex) const
+      {  DomainElementFunctions* domainFunctions = nullptr; 
+         DomainElement result = (*pfFunctions->get_register_value)
+               (pmModel, registerIndex, pParameters, &uErrors, &domainFunctions);
+         return DomainMultiBitValue(std::move(result), domainFunctions, peDomainEnv);
+      }
+   DomainMultiFloatValue getRegisterValueAsMultiFloat(int registerIndex) const
+      {  DomainElementFunctions* domainFunctions = nullptr; 
+         DomainElement result = (*pfFunctions->get_register_value)
+               (pmModel, registerIndex, pParameters, &uErrors, &domainFunctions);
+         return DomainMultiFloatValue(std::move(result), domainFunctions, peDomainEnv);
+      }
+
+   DomainMultiBitValue loadMultiBitValue(
+         DomainMultiBitValue&& indirectAddress, size_t size) const
+      {  DomainElementFunctions* domainFunctions = nullptr; 
+         DomainElement result = (*pfFunctions->load_multibit_value)
+               (pmModel, &indirectAddress.svalue(), size, pParameters, &uErrors,
+                &domainFunctions);
+         return DomainMultiBitValue(std::move(result), domainFunctions, peDomainEnv);
+      }
+   DomainMultiBitValue loadMultiBitDisjunctionValue(
+         DomainMultiBitValue&& indirectAddress, size_t size) const
+      {  DomainElementFunctions* domainFunctions = nullptr; 
+         DomainElement result = (*pfFunctions->load_multibit_disjunctive_value)
+               (pmModel, &indirectAddress.svalue(), size, pParameters, &uErrors,
+                &domainFunctions);
+         return DomainMultiBitValue(std::move(result), domainFunctions, peDomainEnv);
+      }
+   DomainMultiFloatValue loadMultiFloatValue(
+         DomainMultiBitValue&& indirectAddress, size_t size) const
+      {  DomainElementFunctions* domainFunctions = nullptr; 
+         DomainElement result = (*pfFunctions->load_multifloat_value)
+               (pmModel, &indirectAddress.svalue(), size, pParameters, &uErrors,
+                &domainFunctions);
+         return DomainMultiFloatValue(std::move(result), domainFunctions, peDomainEnv);
+      }
+
+   void storeMultiBitValue(DomainMultiBitValue&& indirectAddress,
+         DomainMultiBitValue&& value)
+      {  (*pfFunctions->store_value)(pmModel, &indirectAddress.svalue(),
+               &value.svalue(), pParameters, &uErrors);
+      }
+   void storeMultiFloatValue(DomainMultiBitValue&& indirectAddress,
+         DomainMultiFloatValue&& value)
+      {  (*pfFunctions->store_value)(pmModel, &indirectAddress.svalue(),
+               &value.svalue(), pParameters, &uErrors);
+      }
+   void constraintStoreValue(DomainMultiBitValue&& indirectAddress,
+         DomainMultiBitValue&& value, unsigned indirectRegister)
+      {  (*pfFunctions->constraint_store_value)(pmModel, &indirectAddress.svalue(),
+            &value.svalue(), indirectRegister, pParameters, &uErrors);
+      }
+   void constraintAddress(DomainMultiBitValue&& indirectAddress,
+         DomainMultiBitValue&& value)
+      {  (*pfFunctions->constraint_address)(pmModel, &indirectAddress.svalue(),
+            &value.svalue(), pParameters, &uErrors);
+      }
 };
 
 struct Processor
@@ -605,9 +781,6 @@ struct Processor
   {
     enum InstructionSet { Arm, Thumb, Jazelle, ThumbEE };
       
-#if 0
-    typedef unisim::util::symbolic::Expr       Expr;
-#endif
     StatusRegister()
       : iset(Arm)                               // Default is ARM instruction set
       , bigendian(false)                        // Default is Little Endian
@@ -650,15 +823,17 @@ struct Processor
   private:
     PSR( PSR const& );
   public:
-    PSR( Processor& p, StatusRegister const& ref )
+    PSR( Processor& p, StatusRegister const& ref, MemoryState& memory)
       : StatusRegister(ref)
       , proc(p)
-      , n(newRegRead(RegID("n"), ScalarType::BOOL))
-      , z(newRegRead(RegID("z"), ScalarType::BOOL))
-      , c(newRegRead(RegID("c"), ScalarType::BOOL))
-      , v(newRegRead(RegID("v"), ScalarType::BOOL))
-      , itstate(ref.outitb ? U8(0).expr : newRegRead(RegID("itstate"), ScalarType::U8))
-      , bg(newRegRead(RegID("cpsr"), ScalarType::U32))
+      , n(memory.getRegisterValueAsBit(RegID("n").code))
+      , z(memory.getRegisterValueAsBit(RegID("z").code))
+      , c(memory.getRegisterValueAsBit(RegID("c").code))
+      , v(memory.getRegisterValueAsBit(RegID("v").code))
+      , itstate(ref.outitb
+            ? std::move(U8(p).setToConstant(DomainIntegerConstant{8, false, 0U}))
+            : memory.getRegisterValueAsMultiBit(RegID("itstate").code))
+      , bg(memory.getRegisterValueAsMultiBit(RegID("cpsr").code))
     {}
     
     bool   GetJ() const { return (iset == Jazelle) or (iset == ThumbEE); }
@@ -667,10 +842,10 @@ struct Processor
     template <typename RF>
     void   Set( RF const& _, U32 const& value )
     {
-      unisim::util::symbolic::StaticAssert<(RF::pos > 31) or ((RF::pos + RF::size) <= 28)>::check(); // NZCV
-      unisim::util::symbolic::StaticAssert<(RF::pos > 26) or ((RF::pos + RF::size) <= 24)>::check(); // ITLO, J
-      unisim::util::symbolic::StaticAssert<(RF::pos > 15) or ((RF::pos + RF::size) <=  9)>::check(); // ITHI, E
-      unisim::util::symbolic::StaticAssert<(RF::pos >  5) or ((RF::pos + RF::size) <=  0)>::check(); // T, MODE
+      StaticAssert<(RF::pos > 31) or ((RF::pos + RF::size) <= 28)>::check(); // NZCV
+      StaticAssert<(RF::pos > 26) or ((RF::pos + RF::size) <= 24)>::check(); // ITLO, J
+      StaticAssert<(RF::pos > 15) or ((RF::pos + RF::size) <=  9)>::check(); // ITHI, E
+      StaticAssert<(RF::pos >  5) or ((RF::pos + RF::size) <=  0)>::check(); // T, MODE
         
       return _.Set( bg, value );
     }
@@ -678,10 +853,10 @@ struct Processor
     template <typename RF>
     U32    Get( RF const& _ )
     {
-      unisim::util::symbolic::StaticAssert<(RF::pos > 31) or ((RF::pos + RF::size) <= 28)>::check(); // NZCV
-      unisim::util::symbolic::StaticAssert<(RF::pos > 26) or ((RF::pos + RF::size) <= 24)>::check(); // ITLO, J
-      unisim::util::symbolic::StaticAssert<(RF::pos > 15) or ((RF::pos + RF::size) <=  9)>::check(); // ITHI, E
-      unisim::util::symbolic::StaticAssert<(RF::pos >  5) or ((RF::pos + RF::size) <=  0)>::check(); // T, MODE
+      StaticAssert<(RF::pos > 31) or ((RF::pos + RF::size) <= 28)>::check(); // NZCV
+      StaticAssert<(RF::pos > 26) or ((RF::pos + RF::size) <= 24)>::check(); // ITLO, J
+      StaticAssert<(RF::pos > 15) or ((RF::pos + RF::size) <=  9)>::check(); // ITHI, E
+      StaticAssert<(RF::pos >  5) or ((RF::pos + RF::size) <=  0)>::check(); // T, MODE
         
       return _.Get( bg );
     }
@@ -689,123 +864,258 @@ struct Processor
     void   SetBits( U32 const& bits, uint32_t mask );
     U32    GetBits();
     
-    void   Set( NRF const& _, BOOL const& value ) { n = value.expr; }
-    void   Set( ZRF const& _, BOOL const& value ) { z = value.expr; }
-    void   Set( CRF const& _, BOOL const& value ) { c = value.expr; }
-    void   Set( VRF const& _, BOOL const& value ) { v = value.expr; }
-    void   Set( ERF const& _, U32 const& value ) { if (proc.Test(value != U32(bigendian))) proc.UnpredictableInsnBehaviour(); }
-    void   Set( NZCVRF const& _, U32 const& value );
+    void   Set( NRF const& _, BOOL&& value ) { n = value; }
+    void   Set( ZRF const& _, BOOL&& value ) { z = value; }
+    void   Set( CRF const& _, BOOL&& value ) { c = value; }
+    void   Set( VRF const& _, BOOL&& value ) { v = value; }
+    void   Set( ERF const& _, const U32& value )
+       {  if (proc.Test(value != std::move(U32(value)
+                .setToConstant(DomainIntegerConstant{32, false, bigendian}))))
+             proc.UnpredictableInsnBehaviour();
+       }
+    void   Set( NZCVRF const& _, U32&& value );
       
-    void   SetITState( uint8_t init_val ) { itstate = U8(init_val); }
-    BOOL   InITBlock() const { return (itstate & U8(0b1111)) != U8(0); }
-      
-    U32    Get( NRF const& _ ) { return U32(BOOL(n)); }
-    U32    Get( ZRF const& _ ) { return U32(BOOL(z)); }
-    U32    Get( CRF const& _ ) { return U32(BOOL(c)); }
-    U32    Get( VRF const& _ ) { return U32(BOOL(v)); }
+    void   SetITState( uint8_t init_val, Processor& p )
+       {  itstate = std::move(U8(p)
+                .setToConstant(DomainIntegerConstant{8, false, init_val}));
+       }
+    BOOL   InITBlock() const
+       {  return (itstate & U8(U8::Empty(), itstate).setToConstant(
+                DomainIntegerConstant{8, false, 0b1111})).castBit();
+       }
+
+    U32    Get( NRF const& _ ) { return n.castToMultiBit(32, false); }
+    U32    Get( ZRF const& _ ) { return z.castToMultiBit(32, false); }
+    U32    Get( CRF const& _ ) { return c.castToMultiBit(32, false); }
+    U32    Get( VRF const& _ ) { return v.castToMultiBit(32, false); }
       
     /* ISetState */
-    U32    Get( JRF const& _ ) { return U32(GetJ()); }
-    U32    Get( TRF const& _ ) { return U32(GetT()); }
+    U32    Get( JRF const& _ )
+       {  return U32(U32::Empty(), itstate).setToConstant(
+                DomainIntegerConstant{32, false, GetJ()});
+       }
+    U32    Get( TRF const& _ )
+       {  return U32(U32::Empty(), itstate).setToConstant(
+                DomainIntegerConstant{32, false, GetT()});
+       }
       
     /* Endianness */
-    U32    Get( ERF const& _ ) { return U32(bigendian); }
-    U32    Get( MRF const& _ ) { return U32(mode); }
+    U32    Get( ERF const& _ )
+       {  return std::move(U32(U32::Empty(), itstate)
+             .setToConstant(DomainIntegerConstant{32, false, bigendian}));
+       }
+    U32    Get( MRF const& _ )
+       {  return std::move(U32(U32::Empty(), itstate)
+             .setToConstant(DomainIntegerConstant{32, false, mode}));
+       }
+
     // U32 Get( ALL const& _ ) { return (U32(BOOL(n)) << 31) | (U32(BOOL(z)) << 30) | (U32(BOOL(c)) << 29) | (U32(BOOL(v)) << 28) | bg; }
       
     Processor& proc;
-    DomainBitElement n, z, c, v; /* TODO: should handle q */
+    DomainBitValue n, z, c, v; /* TODO: should handle q */
     U8 itstate;
     U32 bg;
   };
 
 private:
   Processor( Processor const& );
+
+public:
+  DomainEvaluationEnvironment    domainEnvironment;
+  struct _DomainElementFunctions domainFunctions;
+  InterpretParameters*           interpretParameters;
+  MemoryState*                   memoryState;
+  struct _MemoryModelFunctions   memoryFunctions;
+
+  struct SRegID : public unisim::util::identifier::Identifier<SRegID>
+  {
+    enum Code {
+      SCTLR, ACTLR,
+      CTR, MPIDR,
+      ID_PFR0, CCSIDR, CLIDR, CSSELR,
+      CPACR, NSACR,
+      TTBR0, TTBR1, TTBCR,
+      DACR,
+      DFSR, IFSR, DFAR, IFAR,
+      ICIALLUIS, BPIALLIS,
+      ICIALLU, ICIMVAU, BPIALL,
+      DCIMVAC, DCISW, DCCMVAC, DCCSW, DCCMVAU, DCCIMVAC,
+      TLBIALLIS, TLBIALL, TLBIASID,
+      VBAR,
+      CONTEXTIDR,
+      DIAGCR, CFGBAR, end
+    } code;
+
+    char const* c_str() const
+    {
+      switch (code)
+        {
+        case      SCTLR: return "sctlr";
+        case      ACTLR: return "actlr";
+        case        CTR: return "ctr";
+        case      MPIDR: return "mpidr";
+        case    ID_PFR0: return "id_pfr0";
+        case     CCSIDR: return "ccsidr";
+        case      CLIDR: return "clidr";
+        case     CSSELR: return "csselr";
+        case      CPACR: return "cpacr";
+        case      NSACR: return "nsacr";
+        case      TTBR0: return "ttbr0";
+        case      TTBR1: return "ttbr1";
+        case      TTBCR: return "ttbcr";
+        case       DACR: return "dacr";
+        case       DFSR: return "dfsr";
+        case       IFSR: return "ifsr";
+        case       DFAR: return "dfar";
+        case       IFAR: return "ifar";
+        case  ICIALLUIS: return "icialluis";
+        case   BPIALLIS: return "bpiallis";
+        case    ICIALLU: return "iciallu";
+        case    ICIMVAU: return "icimvau";
+        case     BPIALL: return "bpiall";
+        case    DCIMVAC: return "dcimvac";
+        case      DCISW: return "dcisw";
+        case    DCCMVAC: return "dccmvac";
+        case      DCCSW: return "dccsw";
+        case    DCCMVAU: return "dccmvau";
+        case   DCCIMVAC: return "dccimvac";
+        case  TLBIALLIS: return "tlbiallis";
+        case    TLBIALL: return "tlbiall";
+        case   TLBIASID: return "tlbiasid";
+        case       VBAR: return "vbar";
+        case CONTEXTIDR: return "contextidr";
+        case     DIAGCR: return "diagcr";
+        case     CFGBAR: return "cfgbar";
+        case end:        break;
+        }
+      return "NA";
+    }
+
+    SRegID() : code(end) {}
+    SRegID( Code _code ) : code(_code) {}
+    SRegID( char const* _code ) : code(end) { init(_code); }
+  };
+  
+  struct RegID : public unisim::util::identifier::Identifier<RegID>
+  {
+    enum Code
+      {
+        NA = 0,
+        r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, sl, fp, ip, sp, lr,
+        n, z, c, v, itstate, // q, ge0, ge1, ge2, ge3,
+        cpsr, spsr,
+        fpscr, fpexc,
+        r8_fiq,
+        r9_fiq,
+        sl_fiq,
+        fp_fiq,
+        ip_fiq,
+        sp_fiq,
+        lr_fiq,
+        r8_usr,
+        r9_usr,
+        sl_usr,
+        fp_usr,
+        ip_usr,
+        sp_usr,
+        lr_usr,
+        sp_irq,
+        sp_svc,
+        sp_abt,
+        sp_hyp,
+        sp_und,
+        lr_irq,
+        lr_svc,
+        lr_abt,
+        lr_hyp,
+        lr_und,
+        end
+      } code;
+
+    char const* c_str() const
+    {
+      switch (code)
+        {
+        case         r0: return "r0";
+        case         r1: return "r1";
+        case         r2: return "r2";
+        case         r3: return "r3";
+        case         r4: return "r4";
+        case         r5: return "r5";
+        case         r6: return "r6";
+        case         r7: return "r7";
+        case         r8: return "r8";
+        case         r9: return "r9";
+        case         sl: return "sl";
+        case         fp: return "fp";
+        case         ip: return "ip";
+        case         sp: return "sp";
+        case         lr: return "lr";
+        case          n: return "n";
+        case          z: return "z";
+        case          c: return "c";
+        case          v: return "v";
+        case    itstate: return "itstate";
+        case       cpsr: return "cpsr";
+        case       spsr: return "spsr";
+        case      fpscr: return "fpscr";
+        case      fpexc: return "fpexc";
+        case     r8_fiq: return "r8_fiq";
+        case     r9_fiq: return "r9_fiq";
+        case     sl_fiq: return "sl_fiq";
+        case     fp_fiq: return "fp_fiq";
+        case     ip_fiq: return "ip_fiq";
+        case     sp_fiq: return "sp_fiq";
+        case     lr_fiq: return "lr_fiq";
+        case     r8_usr: return "r8_usr";
+        case     r9_usr: return "r9_usr";
+        case     sl_usr: return "sl_usr";
+        case     fp_usr: return "fp_usr";
+        case     ip_usr: return "ip_usr";
+        case     sp_usr: return "sp_usr";
+        case     lr_usr: return "lr_usr";
+        case     sp_irq: return "sp_irq";
+        case     sp_svc: return "sp_svc";
+        case     sp_abt: return "sp_abt";
+        case     sp_hyp: return "sp_hyp";
+        case     sp_und: return "sp_und";
+        case     lr_irq: return "lr_irq";
+        case     lr_svc: return "lr_svc";
+        case     lr_abt: return "lr_abt";
+        case     lr_hyp: return "lr_hyp";
+        case     lr_und: return "lr_und";
+        case         NA:
+        case        end: break;
+        }
+      return "NA";
+    }
+      
+    RegID() : code(end) {}
+    RegID( Code _code ) : code(_code) {}
+    RegID( char const* _code ) : code(end) { init( _code ); }
+  };
 public:
   
-  Processor( StatusRegister const& ref_psr )
-    : path(0)
-    , reg_values()
-    , next_insn_addr()
-    , branch_type()
-    , cpsr( *this, ref_psr )
-    , spsr( newRegRead(RegID("spsr"), ScalarType::U32) )
-    , sregs()
-    , FPSCR( newRegRead(RegID("fpscr"), ScalarType::U32) )
-    , FPEXC( newRegRead(RegID("fpexc"), ScalarType::U32) )
-    , stores()
-    , unpredictable(false)
-    , is_it_assigned(false)
-    , mode()
-    , foreign_registers()
-    , neonregs()
-  {
-    // GPR regs
-    for (unsigned reg = 0; reg < 15; ++reg)
-      reg_values[reg] = U32( newRegRead( RegID("r0") + reg, ScalarType::U32 ) );
-      
-    // Special registers
-    for (SRegID reg; reg.next();)
-      sregs[reg.idx()] = U32( newRegRead( reg, ScalarType::U32 ) );
+  enum RegisterLimits
+    {
+      RLStart=0,
+      RLGeneralPurpose=15,
+      RLSpecial=RLGeneralPurpose+SRegID::end,
+      RLNeonRegs=RLSpecial+32,
+      RLEnd = RLNeonRegs
+    };
+  Processor()
+     :  domainEnvironment(), domainFunctions{}, interpretParameters(nullptr),
+        memoryState(nullptr), memoryFunctions(), next_targets_queries{}, target_addresses{} {}
 
-    for (unsigned reg = 0; reg < 32; ++reg)
-      neonregs[reg][0] = new NeonRead( reg );
-  }
-
-  bool close( Processor const& ref )
-  {
-    bool complete = path->close();
-    path->add_sink( new PCWrite( next_insn_addr.expr, branch_type ) );
-    if (unpredictable)
-      {
-        path->add_sink( new unisim::util::symbolic::binsec::AssertFalse() );
-        return complete;
-      }
-    if (cpsr.n != ref.cpsr.n)
-      path->add_sink( newRegWrite( RegID("n"), cpsr.n ) );
-    if (cpsr.z != ref.cpsr.z)
-      path->add_sink( newRegWrite( RegID("z"), cpsr.z ) );
-    if (cpsr.c != ref.cpsr.c)
-      path->add_sink( newRegWrite( RegID("c"), cpsr.c ) );
-    if (cpsr.v != ref.cpsr.v)
-      path->add_sink( newRegWrite( RegID("v"), cpsr.v ) );
-    if (cpsr.itstate.expr != ref.cpsr.itstate.expr)
-      path->add_sink( newRegWrite( RegID("itstate"), cpsr.itstate.expr ) );
-    if (cpsr.bg.expr != ref.cpsr.bg.expr)
-      path->add_sink( newRegWrite( RegID("cpsr"), cpsr.bg.expr ) );
-    if (spsr.expr != ref.spsr.expr)
-      path->add_sink( newRegWrite( RegID("spsr"), spsr.expr ) );
-    for (SRegID reg; reg.next();)
-      if (sregs[reg.idx()].expr != ref.sregs[reg.idx()].expr)
-        path->add_sink( newRegWrite( reg, sregs[reg.idx()].expr ) );
-    if (FPSCR.expr != ref.FPSCR.expr)
-      path->add_sink( newRegWrite( RegID("fpscr"), FPSCR.expr ) );
-    if (FPEXC.expr != ref.FPEXC.expr)
-      path->add_sink( newRegWrite( RegID("fpexc"), FPEXC.expr ) );
-    for (unsigned reg = 0; reg < 15; ++reg)
-      {
-        if (reg_values[reg].expr != ref.reg_values[reg].expr)
-          path->add_sink( newRegWrite( RegID("r0") + reg, reg_values[reg].expr ) );
-      }
-    for (ForeignRegisters::iterator itr = foreign_registers.begin(), end = foreign_registers.end(); itr != end; ++itr)
-      {
-        ForeignRegister ref(itr->first.first, itr->first.second);
-        ref.Retain(); // Prevent deletion of this static instance
-        Expr xref( new ForeignRegister(itr->first.first, itr->first.second) );
-        if (itr->second == Expr(&ref)) continue;
-        std::ostringstream buf;
-        ref.Repr( buf );
-        path->add_sink( newRegWrite( RegID(buf.str().c_str()), itr->second ) );
-      }
-    for (unsigned reg = 0; reg < 32; ++reg)
-      {
-        if (neonregs[reg][0] != ref.neonregs[reg][0])
-          GetNeonSinks(reg);
-      }
-    for (std::set<Expr>::const_iterator itr = stores.begin(), end = stores.end(); itr != end; ++itr)
-      path->add_sink( *itr );
-    return complete;
-  }
+  void setMemoryFunctions(struct _MemoryModelFunctions& functions) { memoryFunctions = functions; }
+  void setDomainFunctions(struct _DomainElementFunctions& functions) { domainFunctions = functions; }
+  void setInterpretParameters(InterpretParameters& params) { interpretParameters = &params; }
+  void setMemoryState(MemoryState& memory)
+     {  memoryState = &memory;
+        // [TODO] manage ForeignRegisters
+        memory.setNumberOfRegisters(RLEnd);
+     }
   
   //   =====================================================================
   //   =                 Internal Instruction Control Flow                 =
@@ -816,27 +1126,12 @@ public:
   template <typename OP>
   void UndefinedInstruction( OP* op ) { throw Undefined(); }
     
-#if 0
-  bool concretize( Expr const& cexp )
-  {
-    bool predicate = path->proceed( cexp );
-    path = path->next( predicate );
-    return predicate;
-  }
-#endif
-  
   bool Test( DomainBitValue const& cond )
   {
-#if 0
-    if (not cond.expr.good())
+    bool result;
+    if (!cond.isConstant(&result))
       throw std::logic_error( "Not a valid condition" );
-
-    Expr cexp( BOOL(cond).expr );
-    if (unisim::util::symbolic::ConstNodeBase const* cnode = cexp.ConstSimplify())
-      return cnode->Get( bool() );
-
-    return concretize( cexp );
-#endif
+    return result;
   }
   
   void FPTrap( unsigned exc )
@@ -848,32 +1143,67 @@ public:
   //   =             General Purpose Registers access methods              =
   //   =====================================================================
     
-  U32  GetGPR( uint32_t id ) { return reg_values[id]; }
+  U32  GetGPR( uint32_t id )
+    { assert(memoryState);
+      return memoryState->getRegisterValueAsMultiBit(id);
+    }
   
   // TODO: interworking branches are not correctly handled
-  void SetGPR_mem( uint32_t id, U32 const& value )
-  {
-    if (id != 15)
-      reg_values[id] = value;
-    else
-      SetNIA( value, B_JMP );
-  }
-  void SetGPR( uint32_t id, U32 const& value ) {
-    if (id != 15)
-      reg_values[id] = value;
-    else
-      SetNIA( value, B_JMP );
-  }
-    
+  void addJumpTargetAddress(uint32_t val)
+    {  if (target_addresses.addresses_length >= target_addresses.addresses_array_size) {
+          int old_size = target_addresses.addresses_array_size;
+          target_addresses.addresses = (*target_addresses.realloc_addresses)(
+             target_addresses.addresses, old_size,
+             &target_addresses.addresses_array_size,
+             target_addresses.address_container);
+       }
+       target_addresses.addresses[target_addresses.addresses_length-1] = val;
+       ++target_addresses.addresses_length;
+    }
+  void addCallTargetAddress(uint32_t val)
+    {  addJumpTargetAddress(val); }
+  void addReturnTargetAddress(uint32_t val)
+    {  addJumpTargetAddress(val); }
+
+  void SetGPR_mem( uint32_t id, U32&& value )
+    { assert(memoryState);
+      if (next_targets_queries) {
+        if (id != 15)
+          memoryState->setRegisterValue(id, value);
+        else {
+          DomainIntegerConstant val;
+          if (value.isConstant(&val))
+             addJumpTargetAddress(val.integerValue);
+          else {
+             // [TODO] forcer les disjonctions + énumérer
+             // pour les dynamic jumps
+          }
+        }
+      }
+      else if (memoryState) // isInterpret
+        memoryState->setRegisterValue(id, value);
+    }
   void SetGPR_usr( uint32_t id, U32 const& value ) { /* system mode */ throw Unimplemented(); }
   U32  GetGPR_usr( uint32_t id ) { /* system mode */ throw Unimplemented(); return U32(); }
     
-  U32  GetNIA() { return next_insn_addr; }
   enum branch_type_t { B_JMP = 0, B_CALL, B_RET, B_EXC, B_DBG, B_RFE };
   void SetNIA( U32 const& nia, branch_type_t bt )
   {
-    next_insn_addr = nia;
-    branch_type = (bt == B_CALL) ? Br::Call : (bt == B_RET) ? Br::Return : Br::Jump;
+    if (next_targets_queries) {
+      DomainIntegerConstant val;
+      if (nia.isConstant(&val)) {
+        if (bt == B_CALL)
+          addCallTargetAddress(val.integerValue);
+        else if (bt == B_RET)
+          addReturnTargetAddress(val.integerValue);
+        else
+         addJumpTargetAddress(val.integerValue);
+      }
+      else {
+         // [TODO] forcer les disjonctions + énumérer
+         // pour les dynamic jumps
+      }
+    };
   }
 
 #if 0
@@ -912,6 +1242,7 @@ public:
   //   =              Special/System Registers access methods              =
   //   =====================================================================
 
+#if 0
   PSR& CPSR() { return cpsr; }
   
   U32  GetCPSR()                                 { return cpsr.GetBits(); }
@@ -939,6 +1270,7 @@ public:
         cpsr.itstate = itstate;
       }
   }
+#endif
   
   Mode&  CurrentMode() { /* throw Unimplemented(); */ return mode; }
   Mode&  GetMode(uint8_t) { throw Unimplemented(); return mode; }
@@ -956,6 +1288,7 @@ public:
   //   =         Vector and Floating-point Registers access methods       =
   //   ====================================================================
 
+#if 0
   U32 RoundTowardsZeroFPSCR() const
   {
     U32 fpscr = FPSCR;
@@ -978,7 +1311,6 @@ public:
     void _(char c) { *--begin = c; } operator char const* () const { return begin; } char buf[4]; char* begin;
   };
   
-#if 0
   struct NeonRead : public unisim::util::symbolic::binsec::RegRead
   {
     typedef NeonRead this_type;
@@ -1269,75 +1601,7 @@ public:
   /* mask for valid bits in processor control and status registers */
   static uint32_t const PSR_UNALLOC_MASK = 0x00f00000;
 
-  struct SRegID : public unisim::util::identifier::Identifier<SRegID>
-  {
-    enum Code {
-      SCTLR, ACTLR,
-      CTR, MPIDR,
-      ID_PFR0, CCSIDR, CLIDR, CSSELR,
-      CPACR, NSACR,
-      TTBR0, TTBR1, TTBCR,
-      DACR,
-      DFSR, IFSR, DFAR, IFAR,
-      ICIALLUIS, BPIALLIS,
-      ICIALLU, ICIMVAU, BPIALL,
-      DCIMVAC, DCISW, DCCMVAC, DCCSW, DCCMVAU, DCCIMVAC,
-      TLBIALLIS, TLBIALL, TLBIASID,
-      VBAR,
-      CONTEXTIDR,
-      DIAGCR, CFGBAR, end
-    } code;
-
-    char const* c_str() const
-    {
-      switch (code)
-        {
-        case      SCTLR: return "sctlr";
-        case      ACTLR: return "actlr";
-        case        CTR: return "ctr";
-        case      MPIDR: return "mpidr";
-        case    ID_PFR0: return "id_pfr0";
-        case     CCSIDR: return "ccsidr";
-        case      CLIDR: return "clidr";
-        case     CSSELR: return "csselr";
-        case      CPACR: return "cpacr";
-        case      NSACR: return "nsacr";
-        case      TTBR0: return "ttbr0";
-        case      TTBR1: return "ttbr1";
-        case      TTBCR: return "ttbcr";
-        case       DACR: return "dacr";
-        case       DFSR: return "dfsr";
-        case       IFSR: return "ifsr";
-        case       DFAR: return "dfar";
-        case       IFAR: return "ifar";
-        case  ICIALLUIS: return "icialluis";
-        case   BPIALLIS: return "bpiallis";
-        case    ICIALLU: return "iciallu";
-        case    ICIMVAU: return "icimvau";
-        case     BPIALL: return "bpiall";
-        case    DCIMVAC: return "dcimvac";
-        case      DCISW: return "dcisw";
-        case    DCCMVAC: return "dccmvac";
-        case      DCCSW: return "dccsw";
-        case    DCCMVAU: return "dccmvau";
-        case   DCCIMVAC: return "dccimvac";
-        case  TLBIALLIS: return "tlbiallis";
-        case    TLBIALL: return "tlbiall";
-        case   TLBIASID: return "tlbiasid";
-        case       VBAR: return "vbar";
-        case CONTEXTIDR: return "contextidr";
-        case     DIAGCR: return "diagcr";
-        case     CFGBAR: return "cfgbar";
-        case end:        break;
-        }
-      return "NA";
-    }
-
-    SRegID() : code(end) {}
-    SRegID( Code _code ) : code(_code) {}
-    SRegID( char const* _code ) : code(end) { init(_code); }
-  };
-  
+#if 0
   U32& SReg( SRegID reg )
   {
     if (reg.code == SRegID::end)
@@ -1345,129 +1609,24 @@ public:
     return sregs[reg.idx()];
   }
     
-  struct RegID : public unisim::util::identifier::Identifier<RegID>
-  {
-    enum Code
-      {
-        NA = 0,
-        r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, sl, fp, ip, sp, lr,
-        n, z, c, v, itstate, // q, ge0, ge1, ge2, ge3,
-        cpsr, spsr,
-        fpscr, fpexc,
-        r8_fiq,
-        r9_fiq,
-        sl_fiq,
-        fp_fiq,
-        ip_fiq,
-        sp_fiq,
-        lr_fiq,
-        r8_usr,
-        r9_usr,
-        sl_usr,
-        fp_usr,
-        ip_usr,
-        sp_usr,
-        lr_usr,
-        sp_irq,
-        sp_svc,
-        sp_abt,
-        sp_hyp,
-        sp_und,
-        lr_irq,
-        lr_svc,
-        lr_abt,
-        lr_hyp,
-        lr_und,
-        end
-      } code;
 
-    char const* c_str() const
-    {
-      switch (code)
-        {
-        case         r0: return "r0";
-        case         r1: return "r1";
-        case         r2: return "r2";
-        case         r3: return "r3";
-        case         r4: return "r4";
-        case         r5: return "r5";
-        case         r6: return "r6";
-        case         r7: return "r7";
-        case         r8: return "r8";
-        case         r9: return "r9";
-        case         sl: return "sl";
-        case         fp: return "fp";
-        case         ip: return "ip";
-        case         sp: return "sp";
-        case         lr: return "lr";
-        case          n: return "n";
-        case          z: return "z";
-        case          c: return "c";
-        case          v: return "v";
-        case    itstate: return "itstate";
-        case       cpsr: return "cpsr";
-        case       spsr: return "spsr";
-        case      fpscr: return "fpscr";
-        case      fpexc: return "fpexc";
-        case     r8_fiq: return "r8_fiq";
-        case     r9_fiq: return "r9_fiq";
-        case     sl_fiq: return "sl_fiq";
-        case     fp_fiq: return "fp_fiq";
-        case     ip_fiq: return "ip_fiq";
-        case     sp_fiq: return "sp_fiq";
-        case     lr_fiq: return "lr_fiq";
-        case     r8_usr: return "r8_usr";
-        case     r9_usr: return "r9_usr";
-        case     sl_usr: return "sl_usr";
-        case     fp_usr: return "fp_usr";
-        case     ip_usr: return "ip_usr";
-        case     sp_usr: return "sp_usr";
-        case     lr_usr: return "lr_usr";
-        case     sp_irq: return "sp_irq";
-        case     sp_svc: return "sp_svc";
-        case     sp_abt: return "sp_abt";
-        case     sp_hyp: return "sp_hyp";
-        case     sp_und: return "sp_und";
-        case     lr_irq: return "lr_irq";
-        case     lr_svc: return "lr_svc";
-        case     lr_abt: return "lr_abt";
-        case     lr_hyp: return "lr_hyp";
-        case     lr_und: return "lr_und";
-        case         NA:
-        case        end: break;
-        }
-      return "NA";
-    }
-      
-    RegID() : code(end) {}
-    RegID( Code _code ) : code(_code) {}
-    RegID( char const* _code ) : code(end) { init( _code ); }
-  };
-
-#if 0
   ActionNode*      path;
-#endif
   U32              reg_values[16];
   U32              next_insn_addr;
-#if 0
   Br::type_t       branch_type;
-#endif
   PSR              cpsr;
   U32              spsr;
   U32              sregs[SRegID::end];
   U32              FPSCR, FPEXC;
-#if 0
   std::set<Expr>   stores;
-#endif
-  bool             unpredictable;
   bool             is_it_assigned; /* determines wether current instruction is an IT one. */
-  Mode             mode;
-#if 0
   ForeignRegisters foreign_registers;
   Expr             neonregs[32][NEONSIZE];
 #endif
-  DomainEvaluationEnvironment    domainEnvironment;
-  struct _DomainElementFunctions domainFunctions;
+  Mode             mode;
+  bool             unpredictable;
+  bool             next_targets_queries;
+  TargetAddresses  target_addresses;
 };
 
 inline
@@ -1495,9 +1654,9 @@ DomainBitValue::DomainBitValue(DomainBitElement&& value,
    :  DomainValue(std::move(value), source) {}
 
 inline DomainMultiBitValue
-DomainBitValue::castToMultiBit(int sizeInBits) {
-   return DomainMultiBitValue(&(*functionTable.bit_create_cast_multibit)
-         (value(), sizeInBits, &env()));
+DomainBitValue::castToMultiBit(int sizeInBits, bool isSigned) const {
+   return DomainMultiBitValue((*functionTable().bit_create_cast_multibit)
+         (value(), sizeInBits, env()), *this, isSigned);
 }
 
 inline
@@ -1526,19 +1685,21 @@ DLL_API void* create_processor()
 DLL_API void free_processor(void* processor)
 {  delete reinterpret_cast<Processor*>(processor); }
 
-DLL_API bool armsec_next_targets(char* instruction_buffer, size_t buffer_size,
-      uint64_t address, TargetAddresses target_addresses,
+DLL_API bool armsec_next_targets(void* processor, char* instruction_buffer,
+      size_t buffer_size, uint64_t address, TargetAddresses target_addresses,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,
-      InterpretParameters* parameters,
-      uint64_t* result_addresses, int* result_length) {
+      InterpretParameters* parameters, uint64_t* result_addresses,
+      int* result_length) {
+   Processor* proc = reinterpret_cast<Processor*>(processor);
 
 }
 
-DLL_API bool armsec_interpret(char* instruction_buffer, size_t buffer_size,
-      uint64_t address, uint64_t target_address,
+DLL_API bool armsec_interpret(void* processor, char* instruction_buffer,
+      size_t buffer_size, uint64_t address, uint64_t target_address,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,
       InterpretParameters* parameters) {
 
 }
 
 }
+

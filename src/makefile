@@ -5,7 +5,7 @@ ARMSEC_BUILD_DIR=../armsec/build_release/armsec/unisim/component/cxx/processor/a
 
 armsec_decoder.so: armsec_decoder.h armsec_decoder.cpp               \
     $(ARMSEC_SRC_DIR)/disasm.hh $(ARMSEC_SRC_DIR)/disasm.cc
-	g++ -I$(ARMSEC_INCLUDE_DIR) -I$(ARMSEC_BUILD_INCLUDE_DIR) -shared \
+	clang++ -I$(ARMSEC_INCLUDE_DIR) -I$(ARMSEC_BUILD_INCLUDE_DIR) -shared \
       -fPIC armsec_decoder.cpp                                      \
       $(ARMSEC_SRC_DIR)/disasm.cc                                   \
       -o armsec_decoder.so

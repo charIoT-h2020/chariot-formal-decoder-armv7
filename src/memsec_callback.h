@@ -37,26 +37,26 @@ typedef struct _MemoryModelFunctions {
   void (*set_register_value)(MemoryModel* memory, int registerIndex,
       DomainElement* value, InterpretParameters* parameters,
       unsigned* error /* set of MemoryEvaluationErrorFlags */);
-  DomainElement* (*get_register_value)(MemoryModel* memory,
+  DomainElement (*get_register_value)(MemoryModel* memory,
       int registerIndex, InterpretParameters* parameters,
       unsigned* error /* set of MemoryEvaluationErrorFlags */,
       DomainElementFunctions** elementFunctions);
 
-  DomainElement* (*load_multibit_value)(MemoryModel* memory,
+  DomainElement (*load_multibit_value)(MemoryModel* memory,
       DomainElement* indirect_address, size_t size, InterpretParameters* parameters,
       unsigned* error, DomainElementFunctions** elementFunctions);
-  DomainElement* (*load_multibit_disjunctive_value)(MemoryModel* memory,
+  DomainElement (*load_multibit_disjunctive_value)(MemoryModel* memory,
       DomainElement* indirect_address, size_t size, InterpretParameters* parameters,
       unsigned* error, DomainElementFunctions** elementFunctions);
-  DomainElement* (*load_floating_value)(MemoryModel* memory, DomainElement* indirect_address,
-      size_t size_exponent, size_t size_mantissa, InterpretParameters* parameters,
+  DomainElement (*load_multifloat_value)(MemoryModel* memory,
+      DomainElement* indirect_address, size_t size, InterpretParameters* parameters,
       unsigned* error, DomainElementFunctions** elementFunctions);
 
   void (*store_value)(MemoryModel* memory, DomainElement* indirect_address,
       DomainElement* value, InterpretParameters* parameters, unsigned* error);
-  void (*constraint_store_value)(MemoryModel* memory, DomainElement** indirect_address,
+  void (*constraint_store_value)(MemoryModel* memory, DomainElement* indirect_address,
       DomainElement* value, unsigned indirect_register, InterpretParameters* parameters, unsigned* error);
-  void (*constraint_address)(MemoryModel* memory, DomainElement** indirect_address,
+  void (*constraint_address)(MemoryModel* memory, DomainElement* indirect_address,
       DomainElement* value, InterpretParameters* parameters, unsigned* error);
 } MemoryModelFunctions;
 

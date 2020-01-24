@@ -62,6 +62,7 @@ typedef struct _MemoryModelFunctions MemoryModelFunctions;
 typedef struct _TargetAddresses {
    uint64_t* addresses;
    int addresses_array_size;
+   int addresses_length;
 
    uint64_t* (*realloc_addresses)(uint64_t* old_addresses, int old_size,
          int* new_size, void* address_container);
@@ -71,14 +72,14 @@ typedef struct _TargetAddresses {
 DLL_API void* create_processor();
 DLL_API void free_processor(void* processor);
 
-DLL_API bool armsec_next_targets(char* instruction_buffer, size_t buffer_size,
-      uint64_t address, TargetAddresses target_addresses,
+DLL_API bool armsec_next_targets(void* processor, char* instruction_buffer,
+      size_t buffer_size, uint64_t address, TargetAddresses target_addresses,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,
-      InterpretParameters* parameters,
-      uint64_t* result_addresses, int* result_length);
+      InterpretParameters* parameters, uint64_t* result_addresses,
+      int* result_length);
 
-DLL_API bool armsec_interpret(char* instruction_buffer, size_t buffer_size,
-      uint64_t address, uint64_t target_address,
+DLL_API bool armsec_interpret(void* processor, char* instruction_buffer,
+      size_t buffer_size, uint64_t address, uint64_t target_address,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,
       InterpretParameters* parameters);
 

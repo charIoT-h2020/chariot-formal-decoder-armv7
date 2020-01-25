@@ -8,6 +8,8 @@
 
 #define CP15ENCODE( CRN, OPC1, CRM, OPC2 ) ((OPC1 << 12) | (CRN << 8) | (CRM << 4) | (OPC2 << 0))
 
+enum REG_ID { R0=0, R15=15,CPSR_ID} ;
+
 // template <typename ARCH, unsigned OPSIZE> struct TypeFor {};
 
 // template <typename ARCH> struct TypeFor<ARCH, 8> { typedef typename ARCH:: S8 S; typedef typename ARCH:: U8 U; };
@@ -17,6 +19,9 @@
 
 template <bool test> struct StaticAssert {};
 template <> struct StaticAssert<true> { static void check() {}; };
+
+template <class T, class U>  struct CmpTypes { static bool const same = false; };
+template <class T>  struct CmpTypes<T,T> { static bool const same = true; };
 
 struct ScalarType
 {
@@ -148,7 +153,7 @@ class DomainValue {
       } 
 };
 
-class DomainMultiBitValue;
+//class DomainMultiBitValue;
 class DomainBitValue : public DomainValue {
   public:
    DomainBitValue() {}
@@ -171,7 +176,7 @@ class DomainBitValue : public DomainValue {
       {  svalue() = (*functionTable().bit_create_constant)(value); return *this; }
    DomainBitValue& setToUndefined(bool isSymbolic)
       {  svalue() = (*functionTable().bit_create_top)(isSymbolic); return *this; }
-   DomainMultiBitValue castToMultiBit(int sizeInBits, bool isSigned) const;
+   // DomainMultiBitValue castToMultiBit(int sizeInBits, bool isSigned) const;
 
    DomainBitValue operator~() const
       {  return DomainBitValue((*functionTable().bit_create_unary_apply)
@@ -253,121 +258,154 @@ class DomainBitValue : public DomainValue {
       {  return (*functionTable().bit_is_constant_value)(this->value(), value); }
 };
 
-struct DomainMultiBitValue : public DomainValue {
+extern DomainValue getRootDomainValue();
+
+
+template <typename VALUE_TYPE>
+struct DomainMultiBitValue : public DomainValue
+{
+   typedef VALUE_TYPE value_type;
+   typedef DomainMultiBitValue<VALUE_TYPE> this_type;
+  
+   DomainMultiBitValue() : DomainValue(getRootDomainValue()) {}
+
+   explicit DomainMultiBitValue( value_type value )
+     : DomainValue(getRootDomainValue())
+   {
+     svalue() = (*functionTable().multibit_create_constant)(DomainIntegerConstant{8*sizeof(VALUE_TYPE), std::numeric_limits<VALUE_TYPE>::is_signed, value});
+   }
+
+   DomainMultiBitValue(DomainElement&& element, Processor& proc)
+     : DomainValue(std::move(element), proc)
+   {}
+
+   DomainMultiBitValue(DomainElement&& element, DomainValue const& value)
+     : DomainValue(std::move(element), value)
+   {}
+
+   template <typename SRC_VALUE_TYPE>
+   explicit DomainMultiBitValue( DomainMultiBitValue<SRC_VALUE_TYPE> const& other )
+    {
+      if (CmpTypes<SRC_VALUE_TYPE,VALUE_TYPE>::same) {
+        this->DomainValue::operator= ( other );
+      } else {
+        this->DomainValue::operator= ( getRootDomainValue() );
+        svalue() = (*functionTable().multibit_create_cast_multibit(other.value(),8*sizeof(SRC_VALUE_TYPE),8*sizeof(VALUE_TYPE),std::numeric_limits<SRC_VALUE_TYPE>::is_signed));
+      }
+    }
+
   private:
-   bool fSigned;
-
+   bool isSigned() const { return std::numeric_limits<VALUE_TYPE>::is_signed; }
   public:
-   DomainMultiBitValue() : fSigned(false) {}
-   DomainMultiBitValue(Empty empty, const DomainValue& ref)
-      :  DomainValue(empty, ref), fSigned(false) {}
-   DomainMultiBitValue(DomainMultiBitElement&& value, struct _DomainElementFunctions* functions, DomainEvaluationEnvironment* env)
-      :  DomainValue(std::move(value), functions, env), fSigned(false) {}
-   DomainMultiBitValue(Processor& processor);
-   DomainMultiBitValue(DomainMultiBitElement&& value, Processor& processor, bool isSigned);
-   DomainMultiBitValue(DomainMultiBitElement&& value, const DomainValue& source, bool isSigned)
-      :  DomainValue(std::move(value), source), fSigned(isSigned) {}
-   explicit DomainMultiBitValue(DomainIntegerConstant value, Processor& processor, bool isSigned)
-      :  DomainValue(processor), fSigned(isSigned)
-      {  svalue() = (*functionTable().multibit_create_constant)(value); }
-   DomainMultiBitValue(DomainMultiBitValue&& source) = default;
-   DomainMultiBitValue(const DomainMultiBitValue& source) = default;
-   DomainMultiBitValue& operator=(DomainMultiBitValue&& source) = default;
-   DomainMultiBitValue& operator=(const DomainMultiBitValue& source) = default;
+   // DomainMultiBitValue() : DomainValue(fSigned(false) {}
+   // DomainMultiBitValue(Empty empty, const DomainValue& ref)
+   //    :  DomainValue(empty, ref), fSigned(false) {}
+   // DomainMultiBitValue(DomainMultiBitElement&& value, struct _DomainElementFunctions* functions, DomainEvaluationEnvironment* env)
+   //    :  DomainValue(std::move(value), functions, env), fSigned(false) {}
+   // DomainMultiBitValue(Processor& processor);
+   // DomainMultiBitValue(DomainMultiBitElement&& value, Processor& processor, bool isSigned);
+   // DomainMultiBitValue(DomainMultiBitElement&& value, const DomainValue& source, bool isSigned)
+   //    :  DomainValue(std::move(value), source), fSigned(isSigned) {}
+   // explicit DomainMultiBitValue(DomainIntegerConstant value, Processor& processor, bool isSigned)
+   //    :  DomainValue(processor), fSigned(isSigned)
+   //    {  svalue() = (*functionTable().multibit_create_constant)(value); }
+   // DomainMultiBitValue(DomainMultiBitValue&& source) = default;
+   // DomainMultiBitValue(const DomainMultiBitValue& source) = default;
+   // DomainMultiBitValue& operator=(DomainMultiBitValue&& source) = default;
+   // DomainMultiBitValue& operator=(const DomainMultiBitValue& source) = default;
 
-   DomainMultiBitValue& setToConstant(DomainIntegerConstant value)
-      {  svalue() = (*functionTable().multibit_create_constant)(value);
-         fSigned = value.isSigned;
-         return *this;
-      }
-   DomainMultiBitValue& setToUndefined(int sizeInBits, bool isSymbolic, bool isSigned)
-      {  svalue() = (*functionTable().multibit_create_top)(sizeInBits, isSymbolic);
-         fSigned = isSigned;
-         return *this;
-      }
-   DomainBitValue castBit()
-      {  return DomainBitValue((*functionTable().multibit_create_cast_bit)
-               (value(), env()), *this);
-      }
-   DomainBitValue castShiftBit(int shift)
-      {  return DomainBitValue((*functionTable().multibit_create_cast_shift_bit)
-               (value(), shift, env()), *this);
-      }
+   // DomainMultiBitValue& setToConstant(DomainIntegerConstant value)
+   //    {  svalue() = (*functionTable().multibit_create_constant)(value);
+   //       return *this;
+   //    }
+   // DomainMultiBitValue& setToUndefined(int sizeInBits, bool isSymbolic, bool isSigned)
+   //    {  svalue() = (*functionTable().multibit_create_top)(sizeInBits, isSymbolic);
+   //       assert( isSigned == std::numeric_limits<SRC_VALUE_TYPE>::is_signed);
+   //       return *this;
+   //    }
+   // DomainBitValue castBit()
+   //    {  return DomainBitValue((*functionTable().multibit_create_cast_bit)
+   //             (value(), env()), *this);
+   //    }
+   // DomainBitValue castShiftBit(int shift)
+   //    {  return DomainBitValue((*functionTable().multibit_create_cast_shift_bit)
+   //             (value(), shift, env()), *this);
+   //    }
 
    DomainMultiBitValue operator~() const
       {  return DomainMultiBitValue((*functionTable().multibit_create_unary_apply)
-               (value(), DMBUOBitNegate, env()), *this, fSigned);
+               (value(), DMBUOBitNegate, env()), *this);
       }
    DomainMultiBitValue operator-() const
       {  return DomainMultiBitValue((*functionTable().multibit_create_unary_apply)
-               (value(), DMBUOOppositeSigned, env()), *this, fSigned);
+               (value(), DMBUOOppositeSigned, env()), *this);
       }
    DomainMultiBitValue& operator++()
       {  (*functionTable().multibit_unary_apply_assign)
-               (&svalue(), fSigned ? DMBUONextSigned : DMBUONextUnsigned, env());
+               (&svalue(), isSigned() ? DMBUONextSigned : DMBUONextUnsigned, env());
          return *this;
       }
    DomainMultiBitValue& operator--()
       {  (*functionTable().multibit_unary_apply_assign)
-               (&svalue(), fSigned ? DMBUOPrevSigned : DMBUOPrevUnsigned, env());
+               (&svalue(), isSigned() ? DMBUOPrevSigned : DMBUOPrevUnsigned, env());
          return *this;
       }
    DomainMultiBitValue operator+(const DomainMultiBitValue& source) const
       {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
-               (value(), fSigned ? DMBBOPlusSigned : DMBBOPlusUnsigned, source.value(), env()), *this, fSigned);
+               (value(), isSigned() ? DMBBOPlusSigned : DMBBOPlusUnsigned, source.value(), env()), *this);
       }
    DomainMultiBitValue operator-(const DomainMultiBitValue& source) const
       {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
-               (value(), fSigned ? DMBBOMinusSigned : DMBBOMinusUnsigned, source.value(), env()), *this, fSigned);
+               (value(), isSigned() ? DMBBOMinusSigned : DMBBOMinusUnsigned, source.value(), env()), *this);
       }
    DomainMultiBitValue operator*(const DomainMultiBitValue& source) const
       {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
-               (value(), fSigned ? DMBBOTimesSigned : DMBBOTimesUnsigned, source.value(), env()), *this, fSigned);
+               (value(), isSigned() ? DMBBOTimesSigned : DMBBOTimesUnsigned, source.value(), env()), *this);
       }
    DomainMultiBitValue operator/(const DomainMultiBitValue& source) const
       {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
-               (value(), fSigned ? DMBBODivideSigned : DMBBODivideUnsigned, source.value(), env()), *this, fSigned);
+               (value(), isSigned() ? DMBBODivideSigned : DMBBODivideUnsigned, source.value(), env()), *this);
       }
    DomainMultiBitValue operator%(const DomainMultiBitValue& source) const
       {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
-               (value(), fSigned ? DMBBOModuloSigned : DMBBOModuloUnsigned, source.value(), env()), *this, fSigned);
+               (value(), isSigned() ? DMBBOModuloSigned : DMBBOModuloUnsigned, source.value(), env()), *this);
       }
    DomainMultiBitValue operator|(const DomainMultiBitValue& source) const
       {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
-               (value(), DMBBOBitOr, source.value(), env()), *this, fSigned);
+               (value(), DMBBOBitOr, source.value(), env()), *this);
       }
    DomainMultiBitValue operator&(const DomainMultiBitValue& source) const
       {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
-               (value(), DMBBOBitAnd, source.value(), env()), *this, fSigned);
+               (value(), DMBBOBitAnd, source.value(), env()), *this);
       }
    DomainMultiBitValue operator^(const DomainMultiBitValue& source) const
       {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
-               (value(), DMBBOBitExclusiveOr, source.value(), env()), *this, fSigned);
+               (value(), DMBBOBitExclusiveOr, source.value(), env()), *this);
       }
 
    DomainMultiBitValue& operator+=(const DomainMultiBitValue& source)
       {  (*functionTable().multibit_binary_apply_assign)
-               (&svalue(), fSigned ? DMBBOPlusSigned : DMBBOPlusUnsigned, source.value(), env());
+               (&svalue(), isSigned() ? DMBBOPlusSigned : DMBBOPlusUnsigned, source.value(), env());
          return *this;
       }
    DomainMultiBitValue& operator-=(const DomainMultiBitValue& source)
       {  (*functionTable().multibit_binary_apply_assign)
-               (&svalue(), fSigned ? DMBBOMinusSigned : DMBBOMinusUnsigned, source.value(), env());
+               (&svalue(), isSigned() ? DMBBOMinusSigned : DMBBOMinusUnsigned, source.value(), env());
          return *this;
       }
    DomainMultiBitValue& operator*=(const DomainMultiBitValue& source)
       {  (*functionTable().multibit_binary_apply_assign)
-               (&svalue(), fSigned ? DMBBOTimesSigned : DMBBOTimesUnsigned, source.value(), env());
+               (&svalue(), isSigned() ? DMBBOTimesSigned : DMBBOTimesUnsigned, source.value(), env());
          return *this;
       }
    DomainMultiBitValue& operator/=(const DomainMultiBitValue& source)
       {  (*functionTable().multibit_binary_apply_assign)
-               (&svalue(), fSigned ? DMBBODivideSigned : DMBBODivideUnsigned, source.value(), env());
+               (&svalue(), isSigned() ? DMBBODivideSigned : DMBBODivideUnsigned, source.value(), env());
          return *this;
       }
    DomainMultiBitValue& operator%=(const DomainMultiBitValue& source)
       {  (*functionTable().multibit_binary_apply_assign)
-               (&svalue(), fSigned ? DMBBOModuloSigned : DMBBOModuloUnsigned, source.value(), env());
+               (&svalue(), isSigned() ? DMBBOModuloSigned : DMBBOModuloUnsigned, source.value(), env());
          return *this;
       }
    DomainMultiBitValue& operator|=(const DomainMultiBitValue& source)
@@ -385,6 +423,17 @@ struct DomainMultiBitValue : public DomainValue {
                (&svalue(), DMBBOBitExclusiveOr, source.value(), env());
          return *this;
       }
+   template <typename SHT>
+   DomainMultiBitValue operator << (SHT sht) const
+      {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
+           (value(), DMBBOBitOr, this_type(sht).value(), env()), *this);
+      }
+
+   template <typename SHT>
+   DomainMultiBitValue operator >> (SHT sht) const
+      {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
+           (value(), DMBBOBitOr, this_type(sht).value(), env()), *this);
+      }
 
    DomainBitValue operator==(const DomainMultiBitValue& source) const
       {  return DomainBitValue((*functionTable().multibit_binary_compare_domain)
@@ -396,24 +445,24 @@ struct DomainMultiBitValue : public DomainValue {
       }
    DomainBitValue operator<=(const DomainMultiBitValue& source) const
       {  return DomainBitValue((*functionTable().multibit_binary_compare_domain)
-               (value(), fSigned ? DMBCOCompareLessOrEqualSigned : DMBCOCompareLessOrEqualUnsigned, source.value(), env()), *this);
+               (value(), isSigned() ? DMBCOCompareLessOrEqualSigned : DMBCOCompareLessOrEqualUnsigned, source.value(), env()), *this);
       }
    DomainBitValue operator>=(const DomainMultiBitValue& source) const
       {  return DomainBitValue((*functionTable().multibit_binary_compare_domain)
-               (value(), fSigned ? DMBCOCompareGreaterOrEqualSigned : DMBCOCompareGreaterOrEqualUnsigned, source.value(), env()), *this);
+               (value(), isSigned() ? DMBCOCompareGreaterOrEqualSigned : DMBCOCompareGreaterOrEqualUnsigned, source.value(), env()), *this);
       }
    DomainBitValue operator<(const DomainMultiBitValue& source) const
       {  return DomainBitValue((*functionTable().multibit_binary_compare_domain)
-               (value(), fSigned ? DMBCOCompareLessSigned : DMBCOCompareLessUnsigned, source.value(), env()), *this);
+               (value(), isSigned() ? DMBCOCompareLessSigned : DMBCOCompareLessUnsigned, source.value(), env()), *this);
       }
    DomainBitValue operator>(const DomainMultiBitValue& source) const
       {  return DomainBitValue((*functionTable().multibit_binary_compare_domain)
-               (value(), fSigned ? DMBCOCompareGreaterSigned : DMBCOCompareGreaterUnsigned, source.value(), env()), *this);
+               (value(), isSigned() ? DMBCOCompareGreaterSigned : DMBCOCompareGreaterUnsigned, source.value(), env()), *this);
       }
 
    friend DomainMultiBitValue RotateRight(const DomainMultiBitValue& first, const DomainMultiBitValue& second)
       {  return DomainMultiBitValue((*first.functionTable().multibit_create_binary_apply)
-               (first.value(), DMBBORightRotate, second.value(), first.env()), first, first.fSigned);
+               (first.value(), DMBBORightRotate, second.value(), first.env()), first, first.isSigned());
       }
 
    bool isConstant(DomainIntegerConstant* value) const
@@ -540,70 +589,76 @@ class MemoryState {
             &value.svalue(), pParameters, &uErrors);
       }
 
-   DomainBitValue getRegisterValueAsBit(int registerIndex) const
-      {  DomainElementFunctions* domainFunctions = nullptr; 
-         DomainElement result = (*pfFunctions->get_register_value)
+   DomainElement getRegisterValueAsElement(int registerIndex) const
+      {  DomainElementFunctions* domainFunctions = nullptr;
+         return (*pfFunctions->get_register_value)
                (pmModel, registerIndex, pParameters, &uErrors, &domainFunctions);
-         return DomainBitValue(std::move(result), domainFunctions, peDomainEnv);
-      }
-   DomainMultiBitValue getRegisterValueAsMultiBit(int registerIndex) const
-      {  DomainElementFunctions* domainFunctions = nullptr; 
-         DomainElement result = (*pfFunctions->get_register_value)
-               (pmModel, registerIndex, pParameters, &uErrors, &domainFunctions);
-         return DomainMultiBitValue(std::move(result), domainFunctions, peDomainEnv);
-      }
-   DomainMultiFloatValue getRegisterValueAsMultiFloat(int registerIndex) const
-      {  DomainElementFunctions* domainFunctions = nullptr; 
-         DomainElement result = (*pfFunctions->get_register_value)
-               (pmModel, registerIndex, pParameters, &uErrors, &domainFunctions);
-         return DomainMultiFloatValue(std::move(result), domainFunctions, peDomainEnv);
       }
 
-   DomainMultiBitValue loadMultiBitValue(
-         DomainMultiBitValue&& indirectAddress, size_t size) const
-      {  DomainElementFunctions* domainFunctions = nullptr; 
-         DomainElement result = (*pfFunctions->load_multibit_value)
-               (pmModel, &indirectAddress.svalue(), size, pParameters, &uErrors,
-                &domainFunctions);
-         return DomainMultiBitValue(std::move(result), domainFunctions, peDomainEnv);
-      }
-   DomainMultiBitValue loadMultiBitDisjunctionValue(
-         DomainMultiBitValue&& indirectAddress, size_t size) const
-      {  DomainElementFunctions* domainFunctions = nullptr; 
-         DomainElement result = (*pfFunctions->load_multibit_disjunctive_value)
-               (pmModel, &indirectAddress.svalue(), size, pParameters, &uErrors,
-                &domainFunctions);
-         return DomainMultiBitValue(std::move(result), domainFunctions, peDomainEnv);
-      }
-   DomainMultiFloatValue loadMultiFloatValue(
-         DomainMultiBitValue&& indirectAddress, size_t size) const
-      {  DomainElementFunctions* domainFunctions = nullptr; 
-         DomainElement result = (*pfFunctions->load_multifloat_value)
-               (pmModel, &indirectAddress.svalue(), size, pParameters, &uErrors,
-                &domainFunctions);
-         return DomainMultiFloatValue(std::move(result), domainFunctions, peDomainEnv);
-      }
+   // DomainBitValue getRegisterValueAsBit(int registerIndex) const
+   //    {  DomainElementFunctions* domainFunctions = nullptr; 
+   //       DomainElement result = (*pfFunctions->get_register_value)
+   //             (pmModel, registerIndex, pParameters, &uErrors, &domainFunctions);
+   //       return DomainBitValue(std::move(result), domainFunctions, peDomainEnv);
+   //    }
+   // DomainMultiBitValue getRegisterValueAsMultiBit(int registerIndex) const
+   //    {  DomainElementFunctions* domainFunctions = nullptr; 
+   //       DomainElement result = (*pfFunctions->get_register_value)
+   //             (pmModel, registerIndex, pParameters, &uErrors, &domainFunctions);
+   //       return DomainMultiBitValue(std::move(result), domainFunctions, peDomainEnv);
+   //    }
+   // DomainMultiFloatValue getRegisterValueAsMultiFloat(int registerIndex) const
+   //    {  DomainElementFunctions* domainFunctions = nullptr; 
+   //       DomainElement result = (*pfFunctions->get_register_value)
+   //             (pmModel, registerIndex, pParameters, &uErrors, &domainFunctions);
+   //       return DomainMultiFloatValue(std::move(result), domainFunctions, peDomainEnv);
+   //    }
 
-   void storeMultiBitValue(DomainMultiBitValue&& indirectAddress,
-         DomainMultiBitValue&& value)
-      {  (*pfFunctions->store_value)(pmModel, &indirectAddress.svalue(),
-               &value.svalue(), pParameters, &uErrors);
-      }
-   void storeMultiFloatValue(DomainMultiBitValue&& indirectAddress,
-         DomainMultiFloatValue&& value)
-      {  (*pfFunctions->store_value)(pmModel, &indirectAddress.svalue(),
-               &value.svalue(), pParameters, &uErrors);
-      }
-   void constraintStoreValue(DomainMultiBitValue&& indirectAddress,
-         DomainMultiBitValue&& value, unsigned indirectRegister)
-      {  (*pfFunctions->constraint_store_value)(pmModel, &indirectAddress.svalue(),
-            &value.svalue(), indirectRegister, pParameters, &uErrors);
-      }
-   void constraintAddress(DomainMultiBitValue&& indirectAddress,
-         DomainMultiBitValue&& value)
-      {  (*pfFunctions->constraint_address)(pmModel, &indirectAddress.svalue(),
-            &value.svalue(), pParameters, &uErrors);
-      }
+   // DomainMultiBitValue loadMultiBitValue(
+   //       DomainMultiBitValue&& indirectAddress, size_t size) const
+   //    {  DomainElementFunctions* domainFunctions = nullptr; 
+   //       DomainElement result = (*pfFunctions->load_multibit_value)
+   //             (pmModel, &indirectAddress.svalue(), size, pParameters, &uErrors,
+   //              &domainFunctions);
+   //       return DomainMultiBitValue(std::move(result), domainFunctions, peDomainEnv);
+   //    }
+   // DomainMultiBitValue loadMultiBitDisjunctionValue(
+   //       DomainMultiBitValue&& indirectAddress, size_t size) const
+   //    {  DomainElementFunctions* domainFunctions = nullptr; 
+   //       DomainElement result = (*pfFunctions->load_multibit_disjunctive_value)
+   //             (pmModel, &indirectAddress.svalue(), size, pParameters, &uErrors,
+   //              &domainFunctions);
+   //       return DomainMultiBitValue(std::move(result), domainFunctions, peDomainEnv);
+   //    }
+   // DomainMultiFloatValue loadMultiFloatValue(
+   //       DomainMultiBitValue&& indirectAddress, size_t size) const
+   //    {  DomainElementFunctions* domainFunctions = nullptr; 
+   //       DomainElement result = (*pfFunctions->load_multifloat_value)
+   //             (pmModel, &indirectAddress.svalue(), size, pParameters, &uErrors,
+   //              &domainFunctions);
+   //       return DomainMultiFloatValue(std::move(result), domainFunctions, peDomainEnv);
+   //    }
+
+   // void storeMultiBitValue(DomainMultiBitValue&& indirectAddress,
+   //       DomainMultiBitValue&& value)
+   //    {  (*pfFunctions->store_value)(pmModel, &indirectAddress.svalue(),
+   //             &value.svalue(), pParameters, &uErrors);
+   //    }
+   // void storeMultiFloatValue(DomainMultiBitValue&& indirectAddress,
+   //       DomainMultiFloatValue&& value)
+   //    {  (*pfFunctions->store_value)(pmModel, &indirectAddress.svalue(),
+   //             &value.svalue(), pParameters, &uErrors);
+   //    }
+   // void constraintStoreValue(DomainMultiBitValue&& indirectAddress,
+   //       DomainMultiBitValue&& value, unsigned indirectRegister)
+   //    {  (*pfFunctions->constraint_store_value)(pmModel, &indirectAddress.svalue(),
+   //          &value.svalue(), indirectRegister, pParameters, &uErrors);
+   //    }
+   // void constraintAddress(DomainMultiBitValue&& indirectAddress,
+   //       DomainMultiBitValue&& value)
+   //    {  (*pfFunctions->constraint_address)(pmModel, &indirectAddress.svalue(),
+   //          &value.svalue(), pParameters, &uErrors);
+   //    }
 };
 
 struct Processor
@@ -634,14 +689,14 @@ struct Processor
   typedef DomainMultiFloatValue  F64;
   typedef DomainMultiFloatValue  F32;
   typedef DomainBitValue         BOOL;
-  typedef DomainMultiBitValue    U8;
-  typedef DomainMultiBitValue    U16;
-  typedef DomainMultiBitValue    U32;
-  typedef DomainMultiBitValue    U64;
-  typedef DomainMultiBitValue    S8;
-  typedef DomainMultiBitValue    S16;
-  typedef DomainMultiBitValue    S32;
-  typedef DomainMultiBitValue    S64;
+  typedef DomainMultiBitValue<uint8_t>  U8;
+  typedef DomainMultiBitValue<uint16_t> U16;
+  typedef DomainMultiBitValue<uint32_t> U32;
+  typedef DomainMultiBitValue<uint64_t> U64;
+  typedef DomainMultiBitValue<uint8_t>  S8;
+  typedef DomainMultiBitValue<uint16_t> S16;
+  typedef DomainMultiBitValue<uint32_t> S32;
+  typedef DomainMultiBitValue<uint64_t> S64;
 
 #if 0
   typedef unisim::util::symbolic::FP                   FP;
@@ -785,7 +840,6 @@ struct Processor
       : iset(Arm)                               // Default is ARM instruction set
       , bigendian(false)                        // Default is Little Endian
       , mode(SUPERVISOR_MODE)                   // Default is SUPERVISOR_MODE
-      , outitb(false)                           // Force status as if outside ITBlock
     {}
 
     bool IsThumb() const { return iset == Thumb; }
@@ -793,7 +847,6 @@ struct Processor
     InstructionSet iset;
     bool bigendian;
     uint8_t mode;
-    bool outitb;
   };
   
   struct PSR : public StatusRegister
@@ -823,99 +876,56 @@ struct Processor
   private:
     PSR( PSR const& );
   public:
-    PSR() : proc(nullptr) {}
-    void set( Processor& p, StatusRegister const& ref, MemoryState& memory)
-      { // StatusRegister::operator=(ref);
-        proc = &p;
-        n = (memory.getRegisterValueAsBit(RegID("n").code));
-        z = (memory.getRegisterValueAsBit(RegID("z").code));
-        c = (memory.getRegisterValueAsBit(RegID("c").code));
-        v = (memory.getRegisterValueAsBit(RegID("v").code));
-        itstate = (ref.outitb
-            ? std::move(U8(p).setToConstant(DomainIntegerConstant{8, false, 0U}))
-            : memory.getRegisterValueAsMultiBit(RegID("itstate").code));
-        bg = (memory.getRegisterValueAsMultiBit(RegID("cpsr").code));
-      }
-    
+    PSR( Processor& p, StatusRegister const& ref, MemoryState& memory)
+      : StatusRegister(ref)
+      , proc(p)
+    {}
+
     bool   GetJ() const { return (iset == Jazelle) or (iset == ThumbEE); }
     bool   GetT() const { return (iset ==   Thumb) or (iset == ThumbEE); }
 
     template <typename RF>
     void   Set( RF const& _, U32 const& value )
     {
-      StaticAssert<(RF::pos > 31) or ((RF::pos + RF::size) <= 28)>::check(); // NZCV
-      StaticAssert<(RF::pos > 26) or ((RF::pos + RF::size) <= 24)>::check(); // ITLO, J
-      StaticAssert<(RF::pos > 15) or ((RF::pos + RF::size) <=  9)>::check(); // ITHI, E
+      // StaticAssert<(RF::pos > 31) or ((RF::pos + RF::size) <= 28)>::check(); // NZCV
+      StaticAssert<(RF::pos > 24) or ((RF::pos + RF::size) <= 24)>::check(); // J
+      StaticAssert<(RF::pos >  9) or ((RF::pos + RF::size) <=  9)>::check(); // ITHI, E
       StaticAssert<(RF::pos >  5) or ((RF::pos + RF::size) <=  0)>::check(); // T, MODE
-        
-      return _.Set( bg, value );
+
+      U32 reg = GetBits();
+      _.Set( reg, value );
+      SetBits( reg, -1 );
     }
       
     template <typename RF>
     U32    Get( RF const& _ )
     {
-      StaticAssert<(RF::pos > 31) or ((RF::pos + RF::size) <= 28)>::check(); // NZCV
-      StaticAssert<(RF::pos > 26) or ((RF::pos + RF::size) <= 24)>::check(); // ITLO, J
-      StaticAssert<(RF::pos > 15) or ((RF::pos + RF::size) <=  9)>::check(); // ITHI, E
+      //  StaticAssert<(RF::pos > 31) or ((RF::pos + RF::size) <= 28)>::check(); // NZCV
+      StaticAssert<(RF::pos > 24) or ((RF::pos + RF::size) <= 24)>::check(); // ITLO, J
+      StaticAssert<(RF::pos >  9) or ((RF::pos + RF::size) <=  9)>::check(); // ITHI, E
       StaticAssert<(RF::pos >  5) or ((RF::pos + RF::size) <=  0)>::check(); // T, MODE
         
-      return _.Get( bg );
+      return _.Get( GetBits() );
     }
       
     void   SetBits( U32 const& bits, uint32_t mask );
-    U32    GetBits();
+    U32    GetBits() { return U32(proc.memoryState->getRegisterValueAsElement(CPSR_ID), proc); }
     
-    void   Set( NRF const& _, BOOL&& value ) { n = value; }
-    void   Set( ZRF const& _, BOOL&& value ) { z = value; }
-    void   Set( CRF const& _, BOOL&& value ) { c = value; }
-    void   Set( VRF const& _, BOOL&& value ) { v = value; }
-    void   Set( ERF const& _, const U32& value )
-       {  if (proc->Test(value != std::move(U32(value)
-                .setToConstant(DomainIntegerConstant{32, false, bigendian}))))
-             proc->UnpredictableInsnBehaviour();
-       }
-    void   Set( NZCVRF const& _, U32&& value );
-      
+    void   Set( ERF const& _, const U32& value ) { if (proc.Test(value != U32(bigendian))) proc.UnpredictableInsnBehaviour(); }
     void   SetITState( uint8_t init_val, Processor& p )
-       {  itstate = std::move(U8(p)
-                .setToConstant(DomainIntegerConstant{8, false, init_val}));
+       {  this->Set(ITLORF(), U32(init_val));
+         this->Set(ITHIRF(), U32(init_val>>2));
        }
-    BOOL   InITBlock() const
-       {  return (itstate & U8(U8::Empty(), itstate).setToConstant(
-                DomainIntegerConstant{8, false, 0b1111})).castBit();
-       }
+    BOOL   InITBlock()   {  return (((Get( ITHIRF() ) << 2) | Get( ITLORF() )) & U32(0b1111)) != U32(0); }
 
-    U32    Get( NRF const& _ ) { return n.castToMultiBit(32, false); }
-    U32    Get( ZRF const& _ ) { return z.castToMultiBit(32, false); }
-    U32    Get( CRF const& _ ) { return c.castToMultiBit(32, false); }
-    U32    Get( VRF const& _ ) { return v.castToMultiBit(32, false); }
-      
-    /* ISetState */
-    U32    Get( JRF const& _ )
-       {  return U32(U32::Empty(), itstate).setToConstant(
-                DomainIntegerConstant{32, false, GetJ()});
-       }
-    U32    Get( TRF const& _ )
-       {  return U32(U32::Empty(), itstate).setToConstant(
-                DomainIntegerConstant{32, false, GetT()});
-       }
+    U32    Get( JRF const& _ ) { return U32(GetJ()); }
+    U32    Get( TRF const& _ ) { return U32(GetT()); }
       
     /* Endianness */
-    U32    Get( ERF const& _ )
-       {  return std::move(U32(U32::Empty(), itstate)
-             .setToConstant(DomainIntegerConstant{32, false, bigendian}));
-       }
-    U32    Get( MRF const& _ )
-       {  return std::move(U32(U32::Empty(), itstate)
-             .setToConstant(DomainIntegerConstant{32, false, mode}));
-       }
-
-    // U32 Get( ALL const& _ ) { return (U32(BOOL(n)) << 31) | (U32(BOOL(z)) << 30) | (U32(BOOL(c)) << 29) | (U32(BOOL(v)) << 28) | bg; }
+    U32    Get( ERF const& _ ) { return U32(bigendian); }
+    U32    Get( MRF const& _ ) { return U32(mode); }
       
-    Processor* proc;
-    DomainBitValue n, z, c, v; /* TODO: should handle q */
-    U8 itstate;
-    U32 bg;
+    Processor& proc;
   };
 
 private:
@@ -1147,7 +1157,7 @@ public:
     
   U32  GetGPR( uint32_t id )
     { assert(memoryState);
-      return memoryState->getRegisterValueAsMultiBit(id);
+      return U32(memoryState->getRegisterValueAsElement(id), *this);
     }
   
   // TODO: interworking branches are not correctly handled
@@ -1653,20 +1663,20 @@ DomainBitValue::DomainBitValue(DomainBitElement&& value,
       const DomainValue& source)
    :  DomainValue(std::move(value), source) {}
 
-inline DomainMultiBitValue
-DomainBitValue::castToMultiBit(int sizeInBits, bool isSigned) const {
-   return DomainMultiBitValue((*functionTable().bit_create_cast_multibit)
-         (value(), sizeInBits, env()), *this, isSigned);
-}
+// inline DomainMultiBitValue
+// DomainBitValue::castToMultiBit(int sizeInBits, bool isSigned) const {
+//    return DomainMultiBitValue((*functionTable().bit_create_cast_multibit)
+//          (value(), sizeInBits, env()), *this, isSigned);
+// }
 
-inline
-DomainMultiBitValue::DomainMultiBitValue(Processor& processor)
-   : DomainValue(processor), fSigned(false) {}
+// inline
+// DomainMultiBitValue::DomainMultiBitValue(Processor& processor)
+//    : DomainValue(processor), fSigned(false) {}
 
-inline
-DomainMultiBitValue::DomainMultiBitValue(DomainMultiBitElement&& value,
-      Processor& processor, bool isSigned)
-   :  DomainValue(std::move(value), processor), fSigned(isSigned) {}
+// inline
+// DomainMultiBitValue::DomainMultiBitValue(DomainMultiBitElement&& value,
+//       Processor& processor, bool isSigned)
+//    :  DomainValue(std::move(value), processor), fSigned(isSigned) {}
    
 inline
 DomainMultiFloatValue::DomainMultiFloatValue(Processor& processor)

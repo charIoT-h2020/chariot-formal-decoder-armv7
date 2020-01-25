@@ -290,12 +290,17 @@ struct DomainMultiBitValue : public DomainValue
         this->DomainValue::operator= ( other );
       } else {
         this->DomainValue::operator= ( getRootDomainValue() );
-        svalue() = (*functionTable().multibit_create_cast_multibit(other.value(),8*sizeof(SRC_VALUE_TYPE),8*sizeof(VALUE_TYPE),std::numeric_limits<SRC_VALUE_TYPE>::is_signed));
+        svalue() = (*functionTable().multibit_create_cast_multibit)(other.value(),8*sizeof(SRC_VALUE_TYPE),8*sizeof(VALUE_TYPE),std::numeric_limits<SRC_VALUE_TYPE>::is_signed);
       }
     }
 
   private:
    bool isSigned() const { return std::numeric_limits<VALUE_TYPE>::is_signed; }
+
+  public:
+   DomainElement& svalue() { return DomainValue::svalue(); }
+   const DomainElement& value() const { return DomainValue::value(); }
+
   public:
    // DomainMultiBitValue() : DomainValue(fSigned(false) {}
    // DomainMultiBitValue(Empty empty, const DomainValue& ref)
@@ -840,6 +845,7 @@ struct Processor
       : iset(Arm)                               // Default is ARM instruction set
       , bigendian(false)                        // Default is Little Endian
       , mode(SUPERVISOR_MODE)                   // Default is SUPERVISOR_MODE
+      , outitb(false)                           // Force status as if outside ITBlock
     {}
 
     bool IsThumb() const { return iset == Thumb; }
@@ -847,6 +853,7 @@ struct Processor
     InstructionSet iset;
     bool bigendian;
     uint8_t mode;
+    bool outitb;
   };
   
   struct PSR : public StatusRegister
@@ -876,7 +883,7 @@ struct Processor
   private:
     PSR( PSR const& );
   public:
-    PSR( Processor& p, StatusRegister const& ref, MemoryState& memory)
+    PSR( Processor& p, StatusRegister const& ref)
       : StatusRegister(ref)
       , proc(p)
     {}
@@ -910,9 +917,15 @@ struct Processor
       
     void   SetBits( U32 const& bits, uint32_t mask );
     U32    GetBits() { return U32(proc.memoryState->getRegisterValueAsElement(CPSR_ID), proc); }
+    U8     GetITState() const
+      { return outitb ? U8(0) : U8(proc.memoryState->getRegisterValueAsElement(RegID("itstate").code), proc); }
     
     void   Set( ERF const& _, const U32& value ) { if (proc.Test(value != U32(bigendian))) proc.UnpredictableInsnBehaviour(); }
     void   SetITState( uint8_t init_val, Processor& p )
+       {  this->Set(ITLORF(), U32(init_val));
+         this->Set(ITHIRF(), U32(init_val>>2));
+       }
+    void   SetITState( U8&& init_val )
        {  this->Set(ITLORF(), U32(init_val));
          this->Set(ITHIRF(), U32(init_val>>2));
        }
@@ -1116,7 +1129,7 @@ public:
       RLEnd = RLNeonRegs
     };
   Processor()
-     :  is_it_assigned(false), mode(), unpredictable(false),
+     :  cpsr(*this, StatusRegister()), is_it_assigned(false), mode(), unpredictable(false),
         domainEnvironment(), domainFunctions{}, interpretParameters(nullptr),
         memoryState(nullptr), memoryFunctions(), next_targets_queries{}, target_addresses{} {}
 
@@ -1276,9 +1289,9 @@ public:
       is_it_assigned = false;
     else if (itblock())
       {
-        U8 itstate( cpsr.itstate );
+        U8 itstate( cpsr.GetITState() );
         itstate = (Test((itstate & U8(7)) != U8(0))) ? ((itstate & U8(-32)) | ((itstate << 1) & U8(31))) : U8(0);
-        cpsr.itstate = itstate;
+        cpsr.SetITState(std::move(itstate));
       }
   }
   
@@ -1687,6 +1700,15 @@ DomainMultiFloatValue::DomainMultiFloatValue(DomainMultiFloatElement&& value,
       Processor& processor)
    :  DomainValue(std::move(value), processor) {}
 
+
+struct THUMBISA : public unisim::component::cxx::processor::arm::isa::thumb::Decoder<Processor>
+{
+  typedef unisim::component::cxx::processor::arm::isa::thumb::CodeType CodeType;
+  typedef unisim::component::cxx::processor::arm::isa::thumb::Operation<Processor> Operation;
+  static CodeType mkcode( uint32_t code ) { return CodeType( code ); }
+  static bool const is_thumb = true;
+};
+
 struct Translator
 {
   Translator( uint32_t _addr, uint32_t _code )
@@ -1749,8 +1771,6 @@ struct Translator
           state.ITAdvance();
         // end = state.close( reference );
       }
-    coderoot->simplify();
-    coderoot->commit_stats();
   }
 
   void translate( std::ostream& sink )
@@ -1759,8 +1779,9 @@ struct Translator
       {
         if      (status.iset == status.Arm)
           {
-            ARMISA armisa;
-            extract( sink, armisa );
+            assert(false);
+            // ARMISA armisa;
+            // extract( sink, armisa );
           }
         else if (status.iset == status.Thumb)
           {
@@ -1780,13 +1801,6 @@ struct Translator
         sink << "(unimplemented)\n";
         return;
       }
-
-    // Translate to DBA
-    unisim::util::symbolic::binsec::Program program;
-    program.Generate( coderoot );
-    typedef unisim::util::symbolic::binsec::Program::const_iterator Iterator;
-    for (Iterator itr = program.begin(), end = program.end(); itr != end; ++itr)
-      sink << "(" << unisim::util::symbolic::binsec::dbx(4, addr) << ',' << itr->first << ") " << itr->second << std::endl;
   }
 
   Processor::StatusRegister status;
@@ -1807,7 +1821,6 @@ DLL_API bool armsec_next_targets(void* processor, char* instruction_buffer,
       InterpretParameters* parameters, uint64_t* result_addresses,
       int* result_length) {
    Processor* proc = reinterpret_cast<Processor*>(processor);
-   proc->
 
 }
 

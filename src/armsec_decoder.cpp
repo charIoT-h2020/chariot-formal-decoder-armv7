@@ -823,18 +823,19 @@ struct Processor
   private:
     PSR( PSR const& );
   public:
-    PSR( Processor& p, StatusRegister const& ref, MemoryState& memory)
-      : StatusRegister(ref)
-      , proc(p)
-      , n(memory.getRegisterValueAsBit(RegID("n").code))
-      , z(memory.getRegisterValueAsBit(RegID("z").code))
-      , c(memory.getRegisterValueAsBit(RegID("c").code))
-      , v(memory.getRegisterValueAsBit(RegID("v").code))
-      , itstate(ref.outitb
+    PSR() : proc(nullptr) {}
+    void set( Processor& p, StatusRegister const& ref, MemoryState& memory)
+      { // StatusRegister::operator=(ref);
+        proc = &p;
+        n = (memory.getRegisterValueAsBit(RegID("n").code));
+        z = (memory.getRegisterValueAsBit(RegID("z").code));
+        c = (memory.getRegisterValueAsBit(RegID("c").code));
+        v = (memory.getRegisterValueAsBit(RegID("v").code));
+        itstate = (ref.outitb
             ? std::move(U8(p).setToConstant(DomainIntegerConstant{8, false, 0U}))
-            : memory.getRegisterValueAsMultiBit(RegID("itstate").code))
-      , bg(memory.getRegisterValueAsMultiBit(RegID("cpsr").code))
-    {}
+            : memory.getRegisterValueAsMultiBit(RegID("itstate").code));
+        bg = (memory.getRegisterValueAsMultiBit(RegID("cpsr").code));
+      }
     
     bool   GetJ() const { return (iset == Jazelle) or (iset == ThumbEE); }
     bool   GetT() const { return (iset ==   Thumb) or (iset == ThumbEE); }
@@ -869,9 +870,9 @@ struct Processor
     void   Set( CRF const& _, BOOL&& value ) { c = value; }
     void   Set( VRF const& _, BOOL&& value ) { v = value; }
     void   Set( ERF const& _, const U32& value )
-       {  if (proc.Test(value != std::move(U32(value)
+       {  if (proc->Test(value != std::move(U32(value)
                 .setToConstant(DomainIntegerConstant{32, false, bigendian}))))
-             proc.UnpredictableInsnBehaviour();
+             proc->UnpredictableInsnBehaviour();
        }
     void   Set( NZCVRF const& _, U32&& value );
       
@@ -911,7 +912,7 @@ struct Processor
 
     // U32 Get( ALL const& _ ) { return (U32(BOOL(n)) << 31) | (U32(BOOL(z)) << 30) | (U32(BOOL(c)) << 29) | (U32(BOOL(v)) << 28) | bg; }
       
-    Processor& proc;
+    Processor* proc;
     DomainBitValue n, z, c, v; /* TODO: should handle q */
     U8 itstate;
     U32 bg;
@@ -1105,7 +1106,8 @@ public:
       RLEnd = RLNeonRegs
     };
   Processor()
-     :  domainEnvironment(), domainFunctions{}, interpretParameters(nullptr),
+     :  is_it_assigned(false), mode(), unpredictable(false),
+        domainEnvironment(), domainFunctions{}, interpretParameters(nullptr),
         memoryState(nullptr), memoryFunctions(), next_targets_queries{}, target_addresses{} {}
 
   void setMemoryFunctions(struct _MemoryModelFunctions& functions) { memoryFunctions = functions; }
@@ -1242,7 +1244,6 @@ public:
   //   =              Special/System Registers access methods              =
   //   =====================================================================
 
-#if 0
   PSR& CPSR() { return cpsr; }
   
   U32  GetCPSR()                                 { return cpsr.GetBits(); }
@@ -1255,7 +1256,7 @@ public:
   
   void ITSetState( uint32_t cond, uint32_t mask )
   {
-    cpsr.SetITState( (cond << 4) | mask );
+    cpsr.SetITState( (cond << 4) | mask, *this );
     is_it_assigned = true;
   }
   
@@ -1270,7 +1271,6 @@ public:
         cpsr.itstate = itstate;
       }
   }
-#endif
   
   Mode&  CurrentMode() { /* throw Unimplemented(); */ return mode; }
   Mode&  GetMode(uint8_t) { throw Unimplemented(); return mode; }
@@ -1614,15 +1614,15 @@ public:
   U32              reg_values[16];
   U32              next_insn_addr;
   Br::type_t       branch_type;
-  PSR              cpsr;
   U32              spsr;
   U32              sregs[SRegID::end];
   U32              FPSCR, FPEXC;
   std::set<Expr>   stores;
-  bool             is_it_assigned; /* determines wether current instruction is an IT one. */
   ForeignRegisters foreign_registers;
   Expr             neonregs[32][NEONSIZE];
 #endif
+  PSR              cpsr;
+  bool             is_it_assigned; /* determines wether current instruction is an IT one. */
   Mode             mode;
   bool             unpredictable;
   bool             next_targets_queries;
@@ -1677,6 +1677,112 @@ DomainMultiFloatValue::DomainMultiFloatValue(DomainMultiFloatElement&& value,
       Processor& processor)
    :  DomainValue(std::move(value), processor) {}
 
+struct Translator
+{
+  Translator( uint32_t _addr, uint32_t _code )
+    : addr(_addr), code(_code) {}
+  
+  template <class ISA>
+  void
+  extract( std::ostream& sink, ISA& isa )
+  {
+    sink << "(address . " << addr << ")\n";
+  
+    // Instruction decoding
+    struct Instruction
+    {
+      typedef typename ISA::Operation Operation;
+      Instruction(ISA& isa, uint32_t addr, uint32_t code)
+        : operation(0), bytecount(0)
+      {
+        operation = isa.NCDecode( addr, ISA::mkcode( code ) );
+        unsigned bitlength = operation->GetLength(); 
+        if ((bitlength != 32) and ((bitlength != 16) or not ISA::is_thumb))
+          { delete operation; operation = 0; }
+        bytecount = bitlength/8;
+      }
+      ~Instruction() { delete operation; }
+      Operation* operator -> () { return operation; }
+      
+      Operation* operation;
+      unsigned   bytecount;
+    };
+    
+    Instruction instruction( isa, addr, code );
+    
+    {
+      uint32_t encoding = instruction->GetEncoding();
+      if (instruction.bytecount == 2)
+        encoding &= 0xffff;
+      
+      sink << "(opcode . " << encoding << ")\n(size . " << (instruction.bytecount) << ")\n";
+    }
+    
+    // Disassemble
+    sink << "(mnemonic . \"";
+    Processor state;
+    try { instruction->disasm( state, sink ); }
+    catch (...) { sink << "(bad)"; }
+    sink << "\")\n";
+    
+    // Get actions
+    bool is_thumb = status.IsThumb();
+    for (bool end = false; not end;)
+      {
+        // Fetch
+        uint32_t insn_addr = instruction->GetAddr();
+        // state.SetNIA( Processor::U32(insn_addr + instruction.bytecount), Processor::B_JMP );
+        // state.reg_values[15] = Processor::U32(insn_addr + (is_thumb ? 4 : 8) );
+        // Execute
+        instruction->execute( state );
+        if (is_thumb)
+          state.ITAdvance();
+        // end = state.close( reference );
+      }
+    coderoot->simplify();
+    coderoot->commit_stats();
+  }
+
+  void translate( std::ostream& sink )
+  {
+    try
+      {
+        if      (status.iset == status.Arm)
+          {
+            ARMISA armisa;
+            extract( sink, armisa );
+          }
+        else if (status.iset == status.Thumb)
+          {
+            THUMBISA thumbisa;
+            extract( sink, thumbisa );
+          }
+        else
+          throw 0;
+      }
+    catch (Processor::Undefined const&)
+      {
+        sink << "(undefined)\n";
+        return;
+      }
+    catch (...)
+      {
+        sink << "(unimplemented)\n";
+        return;
+      }
+
+    // Translate to DBA
+    unisim::util::symbolic::binsec::Program program;
+    program.Generate( coderoot );
+    typedef unisim::util::symbolic::binsec::Program::const_iterator Iterator;
+    for (Iterator itr = program.begin(), end = program.end(); itr != end; ++itr)
+      sink << "(" << unisim::util::symbolic::binsec::dbx(4, addr) << ',' << itr->first << ") " << itr->second << std::endl;
+  }
+
+  Processor::StatusRegister status;
+  uint32_t    addr, code;
+};
+  
 extern "C" {
 
 DLL_API void* create_processor()
@@ -1691,6 +1797,7 @@ DLL_API bool armsec_next_targets(void* processor, char* instruction_buffer,
       InterpretParameters* parameters, uint64_t* result_addresses,
       int* result_length) {
    Processor* proc = reinterpret_cast<Processor*>(processor);
+   proc->
 
 }
 

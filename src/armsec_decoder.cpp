@@ -2,6 +2,7 @@
 #include "unisim/component/cxx/processor/arm/disasm.hh"
 #include "unisim/component/cxx/processor/arm/psr.hh"
 #include "unisim/util/identifier/identifier.hh"
+#include "unisim/util/likely/likely.hh"
 #include "top_thumb.tcc"
 
 #include <cassert>
@@ -9,13 +10,6 @@
 #define CP15ENCODE( CRN, OPC1, CRM, OPC2 ) ((OPC1 << 12) | (CRN << 8) | (CRM << 4) | (OPC2 << 0))
 
 enum REG_ID { R0=0, R15=15,CPSR_ID} ;
-
-// template <typename ARCH, unsigned OPSIZE> struct TypeFor {};
-
-// template <typename ARCH> struct TypeFor<ARCH, 8> { typedef typename ARCH:: S8 S; typedef typename ARCH:: U8 U; };
-// template <typename ARCH> struct TypeFor<ARCH,16> { typedef typename ARCH::S16 S; typedef typename ARCH::U16 U; };
-// template <typename ARCH> struct TypeFor<ARCH,32> { typedef typename ARCH::S32 S; typedef typename ARCH::U32 U; typedef typename ARCH::F32 F; };
-// template <typename ARCH> struct TypeFor<ARCH,64> { typedef typename ARCH::S64 S; typedef typename ARCH::U64 U; typedef typename ARCH::F64 F; };
 
 template <bool test> struct StaticAssert {};
 template <> struct StaticAssert<true> { static void check() {}; };
@@ -73,11 +67,12 @@ class DomainValue {
   protected:
    friend class MemoryState;
    DomainElement& svalue() { return deValue; }
-   const DomainElement& value() const { return deValue; }
    bool hasFunctionTable() const { return pfFunctions; }
    struct _DomainElementFunctions& functionTable() const { assert(pfFunctions); return *pfFunctions; }
    DomainEvaluationEnvironment* env() const { return peEnv; }
 
+  public:
+   const DomainElement& value() const { return deValue; }
   public:
    DomainValue() : pfFunctions(nullptr), peEnv(nullptr) {}
    class Empty {};
@@ -153,6 +148,8 @@ class DomainValue {
       } 
 };
 
+extern DomainValue getRootDomainValue();
+
 //class DomainMultiBitValue;
 class DomainBitValue : public DomainValue {
   public:
@@ -167,6 +164,10 @@ class DomainBitValue : public DomainValue {
    explicit DomainBitValue(bool value, Processor& processor)
       :  DomainValue(processor)
       {  svalue() = (*functionTable().bit_create_constant)(value); }
+   explicit DomainBitValue( bool value )
+     : DomainValue(getRootDomainValue())
+     {  svalue() = (*functionTable().bit_create_constant)(value); }
+
    DomainBitValue(DomainBitValue&& source) = default;
    DomainBitValue(const DomainBitValue& source) = default;
    DomainBitValue& operator=(DomainBitValue&& source) = default;
@@ -176,7 +177,6 @@ class DomainBitValue : public DomainValue {
       {  svalue() = (*functionTable().bit_create_constant)(value); return *this; }
    DomainBitValue& setToUndefined(bool isSymbolic)
       {  svalue() = (*functionTable().bit_create_top)(isSymbolic); return *this; }
-   // DomainMultiBitValue castToMultiBit(int sizeInBits, bool isSigned) const;
 
    DomainBitValue operator~() const
       {  return DomainBitValue((*functionTable().bit_create_unary_apply)
@@ -258,12 +258,13 @@ class DomainBitValue : public DomainValue {
       {  return (*functionTable().bit_is_constant_value)(this->value(), value); }
 };
 
-extern DomainValue getRootDomainValue();
-
+template <typename VALUE_TYPE>
+class DomainMultiFloatValue;
 
 template <typename VALUE_TYPE>
-struct DomainMultiBitValue : public DomainValue
+class DomainMultiBitValue : public DomainValue
 {
+  public:
    typedef VALUE_TYPE value_type;
    typedef DomainMultiBitValue<VALUE_TYPE> this_type;
   
@@ -272,7 +273,16 @@ struct DomainMultiBitValue : public DomainValue
    explicit DomainMultiBitValue( value_type value )
      : DomainValue(getRootDomainValue())
    {
-     svalue() = (*functionTable().multibit_create_constant)(DomainIntegerConstant{8*sizeof(VALUE_TYPE), std::numeric_limits<VALUE_TYPE>::is_signed, value});
+     svalue() = (*functionTable().multibit_create_constant)(DomainIntegerConstant{8*sizeof(VALUE_TYPE), std::numeric_limits<VALUE_TYPE>::is_signed, uint64_t(value)});
+   }
+   DomainMultiBitValue( DomainMultiBitValue&& other ) = default;
+   DomainMultiBitValue( const DomainMultiBitValue& other ) = default;
+   DomainMultiBitValue& operator=( DomainMultiBitValue&& other ) = default;
+   DomainMultiBitValue& operator=( const DomainMultiBitValue& other ) = default;
+   explicit DomainMultiBitValue( const DomainBitValue& other )
+     : DomainValue(getRootDomainValue())
+   {
+     svalue() = (*functionTable().bit_create_cast_multibit)(other.value(),8*sizeof(VALUE_TYPE),env());
    }
 
    DomainMultiBitValue(DomainElement&& element, Processor& proc)
@@ -282,6 +292,8 @@ struct DomainMultiBitValue : public DomainValue
    DomainMultiBitValue(DomainElement&& element, DomainValue const& value)
      : DomainValue(std::move(element), value)
    {}
+   DomainMultiBitValue(DomainElement&& value, struct _DomainElementFunctions* functions, DomainEvaluationEnvironment* env)
+     : DomainValue(std::move(value), functions, env) {}
 
    template <typename SRC_VALUE_TYPE>
    explicit DomainMultiBitValue( DomainMultiBitValue<SRC_VALUE_TYPE> const& other )
@@ -328,15 +340,31 @@ struct DomainMultiBitValue : public DomainValue
    //       assert( isSigned == std::numeric_limits<SRC_VALUE_TYPE>::is_signed);
    //       return *this;
    //    }
-   // DomainBitValue castBit()
-   //    {  return DomainBitValue((*functionTable().multibit_create_cast_bit)
-   //             (value(), env()), *this);
-   //    }
+   operator DomainBitValue() const
+      {  return DomainBitValue((*functionTable().multibit_create_cast_bit)
+               (value(), env()), *this);
+      }
    // DomainBitValue castShiftBit(int shift)
    //    {  return DomainBitValue((*functionTable().multibit_create_cast_shift_bit)
    //             (value(), shift, env()), *this);
    //    }
+   template <class ResultType, int size>
+   DomainMultiFloatValue<ResultType> castToMultiFloat() const
+      {  return DomainMultiFloatValue<ResultType>((*functionTable().multibit_create_cast_multifloat)(value(), size, 
+               std::numeric_limits<VALUE_TYPE>::is_signed, env()), *this); }
 
+   void reduce(int first, int last)
+      {  (*functionTable().multibit_reduce_apply_assign)(&svalue(),
+            DomainMultiBitReduceOperation{first, last}, env());
+      }
+   void extendWithZero(int new_size)
+      {  (*functionTable().multibit_extend_apply_assign)(&svalue(),
+            DomainMultiBitExtendOperation{DMBEOExtendWithZero, new_size}, env());
+      }
+   void bitset(int first, int last, const DomainValue& source)
+      {  (*functionTable().multibit_bitset_apply_assign)(&svalue(),
+            DomainMultiBitSetOperation{first, last}, source.value(), env());
+      }
    DomainMultiBitValue operator~() const
       {  return DomainMultiBitValue((*functionTable().multibit_create_unary_apply)
                (value(), DMBUOBitNegate, env()), *this);
@@ -431,13 +459,26 @@ struct DomainMultiBitValue : public DomainValue
    template <typename SHT>
    DomainMultiBitValue operator << (SHT sht) const
       {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
-           (value(), DMBBOBitOr, this_type(sht).value(), env()), *this);
+           (value(), DMBBOLeftShift, this_type(sht).value(), env()), *this);
+      }
+   template <typename SHT>
+   DomainMultiBitValue& operator <<= (SHT sht)
+      {  (*functionTable().multibit_binary_apply_assign)
+              (&svalue(), DMBBOLeftShift, this_type(sht).value(), env());
+         return *this;
       }
 
    template <typename SHT>
    DomainMultiBitValue operator >> (SHT sht) const
       {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
-           (value(), DMBBOBitOr, this_type(sht).value(), env()), *this);
+           (value(), isSigned() ? DMBBOArithmeticRightShift : DMBBOLogicalRightShift,
+               this_type(sht).value(), env()), *this);
+      }
+   template <typename SHT>
+   DomainMultiBitValue& operator >>= (SHT sht)
+      {  (*functionTable().multibit_binary_apply_assign)
+              (&svalue(), isSigned() ? DMBBOArithmeticRightShift : DMBBOLogicalRightShift, this_type(sht).value(), env());
+         return *this;
       }
 
    DomainBitValue operator==(const DomainMultiBitValue& source) const
@@ -465,23 +506,49 @@ struct DomainMultiBitValue : public DomainValue
                (value(), isSigned() ? DMBCOCompareGreaterSigned : DMBCOCompareGreaterUnsigned, source.value(), env()), *this);
       }
 
-   friend DomainMultiBitValue RotateRight(const DomainMultiBitValue& first, const DomainMultiBitValue& second)
+   template <typename TypeVal>
+   friend DomainMultiBitValue RotateRight(const DomainMultiBitValue& first, TypeVal second)
       {  return DomainMultiBitValue((*first.functionTable().multibit_create_binary_apply)
-               (first.value(), DMBBORightRotate, second.value(), first.env()), first, first.isSigned());
+               (first.value(), DMBBORightRotate, DomainMultiBitValue<int32_t>(second).value(), first.env()), first);
       }
-
+   friend DomainMultiBitValue BitScanReverse(const DomainMultiBitValue& first)
+      {  return DomainMultiBitValue((*first.functionTable().multibit_create_unary_apply)
+               (first.value(), DMBUOBitScanReverse, first.env()), first);
+      }
+   friend DomainMultiBitValue RotateRight(const DomainMultiBitValue& first, const DomainMultiBitValue<int32_t>& second)
+      {  return DomainMultiBitValue((*first.functionTable().multibit_create_binary_apply)
+               (first.value(), DMBBORightRotate, second.value(), first.env()), first);
+      }
+   friend DomainMultiBitValue ByteSwap(const DomainMultiBitValue& first)
+      {  DomainMultiBitValue result = first;
+         for (int index = 0; index < sizeof(VALUE_TYPE)/2; ++index) {
+            DomainMultiBitValue first_source(first), last_source(first);
+            first_source.reduce(index*8+0, index*8+7);
+            last_source.reduce((sizeof(VALUE_TYPE)-index-1)*8+0, (sizeof(VALUE_TYPE)-index)*8-1);
+            result.bitset(index*8+0, index*8+7, last_source);
+            result.bitset((sizeof(VALUE_TYPE)-index-1)*8+0, (sizeof(VALUE_TYPE)-index)*8-1, first_source);
+         }
+         return result;
+      }
    bool isConstant(DomainIntegerConstant* value) const
       {  return (*functionTable().multibit_is_constant_value)(this->value(), value); }
 };
 
+template <typename VALUE_TYPE>
 struct DomainMultiFloatValue : public DomainValue {
+  private:
+   typedef DomainMultiFloatValue<VALUE_TYPE> thisType;
+   VALUE_TYPE vtConstant;
+
   public:
-   DomainMultiFloatValue() {}
+   DomainMultiFloatValue() : vtConstant(0.0) {}
+   DomainMultiFloatValue(VALUE_TYPE val) : vtConstant(val) {}
    DomainMultiFloatValue(Empty empty, const DomainValue& ref)
       :  DomainValue(empty, ref) {}
    DomainMultiFloatValue(DomainMultiFloatElement&& value, struct _DomainElementFunctions* functions, DomainEvaluationEnvironment* env)
       :  DomainValue(std::move(value), functions, env) {}
    DomainMultiFloatValue(Processor& processor);
+
    DomainMultiFloatValue(DomainMultiFloatElement&& value, Processor& processor);
    DomainMultiFloatValue(DomainMultiFloatElement&& value, const DomainValue& source)
       :  DomainValue(std::move(value), source) {}
@@ -492,6 +559,13 @@ struct DomainMultiFloatValue : public DomainValue {
    DomainMultiFloatValue(const DomainMultiFloatValue& source) = default;
    DomainMultiFloatValue& operator=(DomainMultiFloatValue&& source) = default;
    DomainMultiFloatValue& operator=(const DomainMultiFloatValue& source) = default;
+
+   template <class ResultType, int size>
+   DomainMultiFloatValue<ResultType> castToMultiFloat() const
+      {  return DomainMultiFloatValue<ResultType>((*functionTable().multifloat_cast_multifloat)(value(), size, env()), *this); }
+   template <class ResultType, int size>
+   DomainMultiBitValue<ResultType> castToMultiBit() const
+      {  return DomainMultiBitValue<ResultType>((*functionTable().multifloat_create_cast_multibit)(value(), size, env()), *this); }
 
    void setToConstant(DomainFloatingPointConstant value)
       {  svalue() = (*functionTable().multifloat_create_constant)(value); }
@@ -540,6 +614,10 @@ struct DomainMultiFloatValue : public DomainValue {
          return *this;
       }
 
+   DomainMultiBitValue<int32_t> compare(const DomainMultiFloatValue& source) const
+      {  return DomainMultiBitValue<int32_t>((*functionTable().multifloat_binary_full_compare_domain)
+               (value(), source.value(), env()), *this);
+      }
    DomainBitValue operator==(const DomainMultiFloatValue& source) const
       {  return DomainBitValue((*functionTable().multifloat_binary_compare_domain)
                (value(), DMFCOCompareEqual, source.value(), env()), *this);
@@ -567,6 +645,26 @@ struct DomainMultiFloatValue : public DomainValue {
 
    bool isConstant(DomainFloatingPointConstant* value) const
       {  return (*functionTable().multifloat_is_constant_value)(this->value(), value); }
+   void setToNaN();
+   void setQuietBit();
+   DomainBitValue setFlushToZero();
+   DomainBitValue queryIsSNaN() const;
+   DomainBitValue queryIsQNaN() const;
+
+   void multAssignAndAdd(const thisType& op1, const thisType& op2)
+      {  (*functionTable().multifloat_ternary_apply_assign)
+               (&svalue(), DMFTOMultAdd, op1.value(), op2.value(), env());
+      }
+   DomainBitValue queryIsInvalidMulAddNode(const thisType& op1, const thisType& op2) const
+      {  return DomainBitValue((*functionTable().multifloat_ternary_query)
+               (value(), DMFTQIsInvalid, op1.value(), op2.value(), env()), *this);
+      }
+   void negateAssign()
+      {  (*functionTable().multifloat_unary_apply_assign)(&svalue(), DMFUOOpposite, env()); }
+   void absAssign()
+      {  (*functionTable().multifloat_unary_apply_assign)(&svalue(), DMFUOAbs, env()); }
+   void sqrtAssign()
+      {  (*functionTable().multifloat_unary_apply_assign)(&svalue(), DMFUOSqrt, env()); }
 };
 
 class MemoryState {
@@ -589,7 +687,7 @@ class MemoryState {
 
    void setNumberOfRegisters(int number)
       {  (*pfFunctions->set_number_of_registers)(pmModel, number); }
-   void setRegisterValue(int registerIndex, DomainValue& value)
+   void setRegisterValue(int registerIndex, DomainValue&& value)
       {  (*pfFunctions->set_register_value)(pmModel, registerIndex,
             &value.svalue(), pParameters, &uErrors);
       }
@@ -599,19 +697,19 @@ class MemoryState {
          return (*pfFunctions->get_register_value)
                (pmModel, registerIndex, pParameters, &uErrors, &domainFunctions);
       }
-
-   // DomainBitValue getRegisterValueAsBit(int registerIndex) const
-   //    {  DomainElementFunctions* domainFunctions = nullptr; 
-   //       DomainElement result = (*pfFunctions->get_register_value)
-   //             (pmModel, registerIndex, pParameters, &uErrors, &domainFunctions);
-   //       return DomainBitValue(std::move(result), domainFunctions, peDomainEnv);
-   //    }
-   // DomainMultiBitValue getRegisterValueAsMultiBit(int registerIndex) const
-   //    {  DomainElementFunctions* domainFunctions = nullptr; 
-   //       DomainElement result = (*pfFunctions->get_register_value)
-   //             (pmModel, registerIndex, pParameters, &uErrors, &domainFunctions);
-   //       return DomainMultiBitValue(std::move(result), domainFunctions, peDomainEnv);
-   //    }
+   DomainBitValue getRegisterValueAsBit(int registerIndex) const
+      {  DomainElementFunctions* domainFunctions = nullptr; 
+         DomainElement result = (*pfFunctions->get_register_value)
+               (pmModel, registerIndex, pParameters, &uErrors, &domainFunctions);
+         return DomainBitValue(std::move(result), domainFunctions, peDomainEnv);
+      }
+   template <typename TypeInt>
+   DomainMultiBitValue<TypeInt> getRegisterValueAsMultiBit(int registerIndex) const
+      {  DomainElementFunctions* domainFunctions = nullptr; 
+         DomainElement result = (*pfFunctions->get_register_value)
+               (pmModel, registerIndex, pParameters, &uErrors, &domainFunctions);
+         return DomainMultiBitValue<TypeInt>(std::move(result), domainFunctions, peDomainEnv);
+      }
    // DomainMultiFloatValue getRegisterValueAsMultiFloat(int registerIndex) const
    //    {  DomainElementFunctions* domainFunctions = nullptr; 
    //       DomainElement result = (*pfFunctions->get_register_value)
@@ -619,52 +717,124 @@ class MemoryState {
    //       return DomainMultiFloatValue(std::move(result), domainFunctions, peDomainEnv);
    //    }
 
-   // DomainMultiBitValue loadMultiBitValue(
-   //       DomainMultiBitValue&& indirectAddress, size_t size) const
-   //    {  DomainElementFunctions* domainFunctions = nullptr; 
-   //       DomainElement result = (*pfFunctions->load_multibit_value)
-   //             (pmModel, &indirectAddress.svalue(), size, pParameters, &uErrors,
-   //              &domainFunctions);
-   //       return DomainMultiBitValue(std::move(result), domainFunctions, peDomainEnv);
-   //    }
-   // DomainMultiBitValue loadMultiBitDisjunctionValue(
-   //       DomainMultiBitValue&& indirectAddress, size_t size) const
-   //    {  DomainElementFunctions* domainFunctions = nullptr; 
-   //       DomainElement result = (*pfFunctions->load_multibit_disjunctive_value)
-   //             (pmModel, &indirectAddress.svalue(), size, pParameters, &uErrors,
-   //              &domainFunctions);
-   //       return DomainMultiBitValue(std::move(result), domainFunctions, peDomainEnv);
-   //    }
-   // DomainMultiFloatValue loadMultiFloatValue(
-   //       DomainMultiBitValue&& indirectAddress, size_t size) const
-   //    {  DomainElementFunctions* domainFunctions = nullptr; 
-   //       DomainElement result = (*pfFunctions->load_multifloat_value)
-   //             (pmModel, &indirectAddress.svalue(), size, pParameters, &uErrors,
-   //              &domainFunctions);
-   //       return DomainMultiFloatValue(std::move(result), domainFunctions, peDomainEnv);
-   //    }
+   template <class IntType>
+   DomainMultiBitValue<IntType> loadMultiBitValue(
+         const DomainMultiBitValue<uint32_t>& indirectAddress) const
+      {  DomainElementFunctions* domainFunctions = nullptr; 
+         DomainElement result = (*pfFunctions->load_multibit_value)
+               (pmModel, indirectAddress.value(), sizeof(IntType), pParameters, &uErrors,
+                &domainFunctions);
+         return DomainMultiBitValue<IntType>(std::move(result), domainFunctions, peDomainEnv);
+      }
+   template <class IntType>
+   DomainMultiBitValue<IntType> loadMultiBitDisjunctionValue(
+         DomainMultiBitValue<uint32_t>&& indirectAddress) const
+      {  DomainElementFunctions* domainFunctions = nullptr; 
+         DomainElement result = (*pfFunctions->load_multibit_disjunctive_value)
+               (pmModel, indirectAddress.value(), sizeof(IntType), pParameters, &uErrors,
+                &domainFunctions);
+         return DomainMultiBitValue<IntType>(std::move(result), domainFunctions, peDomainEnv);
+      }
+   template <class FloatType>
+   DomainMultiFloatValue<FloatType> loadMultiFloatValue(
+         DomainMultiBitValue<uint32_t>&& indirectAddress) const
+      {  DomainElementFunctions* domainFunctions = nullptr; 
+         DomainElement result = (*pfFunctions->load_multifloat_value)
+               (pmModel, indirectAddress.value(), sizeof(FloatType), pParameters, &uErrors,
+                &domainFunctions);
+         return DomainMultiFloatValue<FloatType>(std::move(result), domainFunctions, peDomainEnv);
+      }
 
-   // void storeMultiBitValue(DomainMultiBitValue&& indirectAddress,
-   //       DomainMultiBitValue&& value)
-   //    {  (*pfFunctions->store_value)(pmModel, &indirectAddress.svalue(),
-   //             &value.svalue(), pParameters, &uErrors);
-   //    }
-   // void storeMultiFloatValue(DomainMultiBitValue&& indirectAddress,
-   //       DomainMultiFloatValue&& value)
-   //    {  (*pfFunctions->store_value)(pmModel, &indirectAddress.svalue(),
-   //             &value.svalue(), pParameters, &uErrors);
-   //    }
-   // void constraintStoreValue(DomainMultiBitValue&& indirectAddress,
-   //       DomainMultiBitValue&& value, unsigned indirectRegister)
-   //    {  (*pfFunctions->constraint_store_value)(pmModel, &indirectAddress.svalue(),
-   //          &value.svalue(), indirectRegister, pParameters, &uErrors);
-   //    }
-   // void constraintAddress(DomainMultiBitValue&& indirectAddress,
-   //       DomainMultiBitValue&& value)
-   //    {  (*pfFunctions->constraint_address)(pmModel, &indirectAddress.svalue(),
-   //          &value.svalue(), pParameters, &uErrors);
-   //    }
+   template <class IntType>
+   void storeMultiBitValue(const DomainMultiBitValue<uint32_t>& indirectAddress,
+         const DomainMultiBitValue<IntType>& value)
+      {  (*pfFunctions->store_value)(pmModel, indirectAddress.value(),
+               value.value(), pParameters, &uErrors);
+      }
+   template <class FloatType>
+   void storeMultiFloatValue(const DomainMultiBitValue<uint32_t>& indirectAddress,
+         const DomainMultiFloatValue<FloatType>& value)
+      {  (*pfFunctions->store_value)(pmModel, indirectAddress.value(),
+               value.value(), pParameters, &uErrors);
+      }
+   template <class IntType>
+   void constraintStoreValue(const DomainMultiBitValue<uint32_t>& indirectAddress,
+         const DomainMultiBitValue<IntType>& value, unsigned indirectRegister)
+      {  (*pfFunctions->constraint_store_value)(pmModel, indirectAddress.value(),
+            value.value(), indirectRegister, pParameters, &uErrors);
+      }
+   template <class IntType>
+   void constraintAddress(const DomainMultiBitValue<uint32_t>& indirectAddress,
+         const DomainMultiBitValue<IntType>& value)
+      {  (*pfFunctions->constraint_address)(pmModel, indirectAddress.value(),
+            value.value(), pParameters, &uErrors);
+      }
 };
+
+struct FP
+{
+  template <typename FLOAT>
+  static void SetDefaultNan( FLOAT& result )
+    { result.setToNaN(); }
+  template <typename FLOAT>
+  static void SetQuietBit( FLOAT& result )
+    { result.setQuietBit(); }
+  
+  template <typename FLOAT> static DomainBitValue
+  FlushToZero( FLOAT& op, DomainMultiBitValue<uint32_t> const& fpscr_val )
+    { return op.setFlushToZero(); }
+
+  template <typename FLOAT> static
+  DomainMultiBitValue<int32_t> Compare( FLOAT op1, FLOAT op2, DomainMultiBitValue<uint32_t> const& fpscr_val )
+    { return op1.compare(op2); }
+
+  template <typename FLOAT> static DomainBitValue IsSNaN( FLOAT const& op )
+    { return op.queryIsSNaN(); }
+  template <typename FLOAT> static DomainBitValue IsQNaN( FLOAT const& op )
+    { return op.queryIsQNaN(); }
+  
+  template <typename FLOAT, class ARCH> static
+  void Add( FLOAT& acc, FLOAT const& op2, ARCH& arch, DomainMultiBitValue<uint32_t> const& fpscr_val )
+    { acc += op2; }
+  template <typename FLOAT, class ARCH> static
+  void Sub( FLOAT& acc, FLOAT const& op2, ARCH& arch, DomainMultiBitValue<uint32_t> const& fpscr_val )
+    { acc -= op2; }
+  template <typename FLOAT, class ARCH> static
+  void Div( FLOAT& acc, FLOAT const& op2, ARCH& arch, DomainMultiBitValue<uint32_t> const& fpscr_val )
+    { acc /= op2; }
+
+  template <typename FLOAT, class ARCH> static
+  void Mul( FLOAT& acc, FLOAT const& op2, ARCH& arch, DomainMultiBitValue<uint32_t> const& fpscr_val )
+    { acc *= op2; }
+
+  template <typename FLOAT, class ARCH> static
+  void MulAdd( FLOAT& acc, FLOAT const& op1, FLOAT const& op2, ARCH& arch, DomainMultiBitValue<uint32_t> const& fpscr_val )
+    { acc.multAssignAndAdd(op1, op2); }
+  template <typename SOFTDBL> static DomainBitValue
+  IsInvalidMulAdd( SOFTDBL const& acc, SOFTDBL const& op1, SOFTDBL const& op2, DomainMultiBitValue<uint32_t> const& fpscr_val )
+    { return acc.queryIsInvalidMulAddNode(op1, op2); }
+  template <typename FLOAT> static void Neg( FLOAT& acc )
+    { acc.negateAssign(); }
+  template <typename FLOAT> static void Abs( FLOAT& acc )
+    { acc.absAssign(); }
+  template <typename FLOAT, class ARCH> static void Sqrt( FLOAT& acc, ARCH& arch, DomainMultiBitValue<uint32_t> const& fpscr_val )
+    { acc.sqrtAssign(); }
+
+  template <class ARCH>
+  static void FtoF(DomainMultiFloatValue<double>& dst, DomainMultiFloatValue<float>& src, ARCH& arch, DomainMultiBitValue<uint32_t> const& fpscr_val )
+    { dst = src.castToMultiFloat<double, 64>(); }
+  template <class ARCH>
+  static void FtoF(DomainMultiFloatValue<float>& dst, DomainMultiFloatValue<double>& src, ARCH& arch, DomainMultiBitValue<uint32_t> const& fpscr_val )
+    { dst = src.castToMultiFloat<float, 32>(); }
+
+  template <typename intT, typename fpT, class ARCH> static
+  void FtoI( DomainMultiBitValue<intT>& dst, DomainMultiFloatValue<fpT> const& src, int fracbits, ARCH& arch, DomainMultiBitValue<uint32_t> const& fpscr_val )
+    { dst = src.template castToMultiBit<intT, sizeof(intT)>(); /* [TODO] fracbits? */ }
+  template <typename fpT, typename intT, class ARCH> static
+  void ItoF( DomainMultiFloatValue<fpT>& dst, DomainMultiBitValue<intT> const& src, int fracbits, ARCH& arch, DomainMultiBitValue<uint32_t> const& fpscr_val )
+    { dst = src.template castToMultiFloat<fpT, sizeof(fpT)>(); /* [TODO] fracbits? */ }
+};
+
 
 struct Processor
 {
@@ -673,6 +843,7 @@ struct Processor
   //   =====================================================================
   struct Unimplemented {};
   struct Undefined {};
+  typedef ::FP FP;
     
   struct Config
   {
@@ -691,114 +862,17 @@ struct Processor
   //   =====================================================================
   //   =                             Data Types                            =
   //   =====================================================================
-  typedef DomainMultiFloatValue  F64;
-  typedef DomainMultiFloatValue  F32;
+  typedef DomainMultiFloatValue<double>  F64;
+  typedef DomainMultiFloatValue<float> F32;
   typedef DomainBitValue         BOOL;
   typedef DomainMultiBitValue<uint8_t>  U8;
   typedef DomainMultiBitValue<uint16_t> U16;
   typedef DomainMultiBitValue<uint32_t> U32;
   typedef DomainMultiBitValue<uint64_t> U64;
-  typedef DomainMultiBitValue<uint8_t>  S8;
-  typedef DomainMultiBitValue<uint16_t> S16;
-  typedef DomainMultiBitValue<uint32_t> S32;
-  typedef DomainMultiBitValue<uint64_t> S64;
-
-#if 0
-  typedef unisim::util::symbolic::FP                   FP;
-  typedef unisim::util::symbolic::ScalarType           ScalarType;
-  
-  typedef unisim::util::symbolic::binsec::ActionNode   ActionNode;
-  typedef unisim::util::symbolic::binsec::Store        Store;
-  typedef unisim::util::symbolic::binsec::Branch       Br;
-
-  template <typename RID>
-  struct RegRead : public unisim::util::symbolic::binsec::RegRead
-  {
-    typedef RegRead<RID> this_type;
-    typedef unisim::util::symbolic::binsec::RegRead Super;
-    RegRead( RID _id, ScalarType::id_t _tp ) : Super(), tp(_tp), id(_id) {}
-    virtual this_type* Mutate() const { return new this_type( *this ); }
-    virtual ScalarType::id_t GetType() const { return tp; }
-    virtual void GetRegName( std::ostream& sink ) const { sink << id.c_str(); }
-    virtual int cmp( ExprNode const& rhs ) const override { return compare( dynamic_cast<RegRead const&>( rhs ) ); }
-    int compare( RegRead const& rhs ) const { if (int delta = int(tp) - int(rhs.tp)) return delta; if (int delta = id.cmp( rhs.id )) return delta; return Super::compare(rhs); }
-
-    ScalarType::id_t tp;
-    RID id;
-  };
-
-  template <typename RID>
-  static Expr newRegRead( RID id, ScalarType::id_t tp ) { return new RegRead<RID>( id, tp ); }
-
-  struct ForeignRegister : public unisim::util::symbolic::binsec::RegRead
-  {
-    typedef unisim::util::symbolic::binsec::RegRead Super;
-    ForeignRegister( uint8_t _mode, unsigned _idx )
-      : Super(), idx(_idx), mode(_mode)
-    {
-      if (mode == SYSTEM_MODE) mode = USER_MODE;
-    }
-    virtual ForeignRegister* Mutate() const { return new ForeignRegister( *this ); }
-    virtual ScalarType::id_t GetType() const { return ScalarType::U32; }
-    
-    char const* mode_ident() const
-    {
-      switch (mode)
-        {
-        case USER_MODE: return "usr";
-        case FIQ_MODE: return "fiq";
-        case IRQ_MODE: return "irq";
-        case SUPERVISOR_MODE: return "svc";
-        case MONITOR_MODE: return "mon";
-        case ABORT_MODE: return "abt";
-        case HYPERVISOR_MODE: return "hyp";
-        case UNDEFINED_MODE: return "und";
-        }
-      throw 0;
-      return "";
-    }
-
-    virtual void GetRegName( std::ostream& sink ) const
-    {
-      sink << (RegID("r0") + idx).c_str() << '_' << mode_ident();
-    }
-    virtual int cmp( ExprNode const& rhs ) const override { return compare( dynamic_cast<ForeignRegister const&>( rhs ) ); }
-    int compare( ForeignRegister const& rhs ) const
-    {
-      if (int delta = int(mode) - int(rhs.mode)) return delta;
-      return idx - rhs.idx;
-    }
-    
-    unsigned idx;
-    uint8_t mode;
-  };
-  
-  template <typename RID>
-  struct RegWrite : public unisim::util::symbolic::binsec::RegWrite
-  {
-    typedef RegWrite<RID> this_type;
-    typedef unisim::util::symbolic::binsec::RegWrite Super;
-    RegWrite( RID _id, Expr const& _value ) : Super(_value), id(_id) {}
-    virtual this_type* Mutate() const { return new this_type( *this ); }
-    virtual ScalarType::id_t GetType() const { return ScalarType::VOID; }
-    virtual void GetRegName( std::ostream& sink ) const { sink << id.c_str(); }
-    virtual int cmp( ExprNode const& rhs ) const override { return compare( dynamic_cast<RegWrite const&>( rhs ) ); }
-    int compare( RegWrite const& rhs ) const { if (int delta = id.cmp( rhs.id )) return delta; return Super::compare( rhs ); }
-    
-    RID id;
-  };
-
-  template <typename RID>
-  static Expr newRegWrite( RID id, Expr const& value ) { return new RegWrite<RID>( id, value ); }
-  
-  struct PCWrite : public Br
-  {
-    PCWrite( Expr const& value, Br::type_t bt ) : Br( value, bt ) {}
-    virtual PCWrite* Mutate() const { return new PCWrite( *this ); }
-    virtual void GetRegName( std::ostream& sink ) const { sink << "pc"; }
-    virtual ScalarType::id_t GetType() const { return ScalarType::VOID; }
-  };
-#endif
+  typedef DomainMultiBitValue<int8_t>  S8;
+  typedef DomainMultiBitValue<int16_t> S16;
+  typedef DomainMultiBitValue<int32_t> S32;
+  typedef DomainMultiBitValue<int64_t> S64;
 
   struct ITCond {};
     
@@ -812,10 +886,6 @@ struct Processor
     void     Swap( Processor& ) {}
   };
     
-#if 0
-  typedef std::map<std::pair<uint8_t,uint32_t>,Expr> ForeignRegisters;
-#endif
-  
   struct CP15Reg
   {
     virtual            ~CP15Reg() {}
@@ -825,14 +895,6 @@ struct Processor
     virtual char const* Describe() = 0;
   };
 
-#if 0
-  struct Load : public unisim::util::symbolic::binsec::Load
-  {
-    Load( Expr const& addr, unsigned size, unsigned alignment, bool bigendian )
-      : unisim::util::symbolic::binsec::Load(addr, size, alignment, bigendian)
-    {}
-  };
-#endif
   //   =====================================================================
   //   =                      Construction/Destruction                     =
   //   =====================================================================
@@ -856,6 +918,7 @@ struct Processor
     bool outitb;
   };
   
+  struct _FPSCR;
   struct PSR : public StatusRegister
   {
     typedef unisim::component::cxx::processor::arm::RegisterField<31,1> NRF; /* Negative Integer Condition Flag */
@@ -892,7 +955,13 @@ struct Processor
     bool   GetT() const { return (iset ==   Thumb) or (iset == ThumbEE); }
 
     template <typename RF>
-    void   Set( RF const& _, U32 const& value )
+    void   Set( RF const& _, const _FPSCR& value )
+    { Set(_, value.operator U32()); }
+    template <typename RF>
+    void   Set( RF const& _, const DomainBitValue& value )
+    { Set(_, U32(value)); }
+    template <typename RF>
+    void   Set( RF const& _, const U32& value )
     {
       // StaticAssert<(RF::pos > 31) or ((RF::pos + RF::size) <= 28)>::check(); // NZCV
       StaticAssert<(RF::pos > 24) or ((RF::pos + RF::size) <= 24)>::check(); // J
@@ -917,6 +986,10 @@ struct Processor
       
     void   SetBits( U32 const& bits, uint32_t mask );
     U32    GetBits() { return U32(proc.memoryState->getRegisterValueAsElement(CPSR_ID), proc); }
+    BOOL   n() const { return proc.memoryState->getRegisterValueAsBit(RegID("n").code); }
+    BOOL   z() const { return proc.memoryState->getRegisterValueAsBit(RegID("z").code); }
+    BOOL   c() const { return proc.memoryState->getRegisterValueAsBit(RegID("c").code); }
+    BOOL   v() const { return proc.memoryState->getRegisterValueAsBit(RegID("v").code); }
     U8     GetITState() const
       { return outitb ? U8(0) : U8(proc.memoryState->getRegisterValueAsElement(RegID("itstate").code), proc); }
     
@@ -1124,12 +1197,16 @@ public:
     {
       RLStart=0,
       RLGeneralPurpose=15,
+      RLStartSpecial=RLGeneralPurpose,
       RLSpecial=RLGeneralPurpose+SRegID::end,
+      RLStartNeonRegs=RLSpecial,
       RLNeonRegs=RLSpecial+32,
+      RLStartForeign=RLNeonRegs,
       RLEnd = RLNeonRegs
     };
   Processor()
-     :  cpsr(*this, StatusRegister()), is_it_assigned(false), mode(), unpredictable(false),
+     :  cpsr(*this, StatusRegister()), FPSCR(*this), FPEXC(*this), is_it_assigned(false),
+        mode(), unpredictable(false),
         domainEnvironment(), domainFunctions{}, interpretParameters(nullptr),
         memoryState(nullptr), memoryFunctions(), next_targets_queries{}, target_addresses{} {}
 
@@ -1194,7 +1271,7 @@ public:
     { assert(memoryState);
       if (next_targets_queries) {
         if (id != 15)
-          memoryState->setRegisterValue(id, value);
+          memoryState->setRegisterValue(id, std::move(value));
         else {
           DomainIntegerConstant val;
           if (value.isConstant(&val))
@@ -1206,12 +1283,19 @@ public:
         }
       }
       else if (memoryState) // isInterpret
-        memoryState->setRegisterValue(id, value);
+        memoryState->setRegisterValue(id, std::move(value));
     }
+  enum branch_type_t { B_JMP = 0, B_CALL, B_RET, B_EXC, B_DBG, B_RFE };
+  void SetGPR( uint32_t id, const U32& value ) {
+    if (id != 15)
+      memoryState->setRegisterValue(id, U32(value));
+    else
+      SetNIA( value, B_JMP );
+  }
   void SetGPR_usr( uint32_t id, U32 const& value ) { /* system mode */ throw Unimplemented(); }
   U32  GetGPR_usr( uint32_t id ) { /* system mode */ throw Unimplemented(); return U32(); }
     
-  enum branch_type_t { B_JMP = 0, B_CALL, B_RET, B_EXC, B_DBG, B_RFE };
+  U32  GetNIA() { return U32(target_addresses.addresses[0]); }
   void SetNIA( U32 const& nia, branch_type_t bt )
   {
     if (next_targets_queries) {
@@ -1231,15 +1315,32 @@ public:
     };
   }
 
-#if 0
-  Expr& GetForeignRegister( uint8_t foreign_mode, uint32_t idx )
-  {
-    Expr& result = foreign_registers[std::make_pair( foreign_mode, idx )];
-    if (not result.node)
-      result = new ForeignRegister( foreign_mode, idx );
-    return result;
-  }
-    
+
+  struct RegisterAccess {
+    RegisterAccess(int registerIndex, Processor& aproc) : proc(&aproc) {}
+    RegisterAccess(uint32_t aval) : val(aval), proc(nullptr) {}
+    RegisterAccess(const U32& aval) : val(aval), proc(nullptr) {}
+    RegisterAccess(const RegisterAccess& source) = default;
+    RegisterAccess& operator=(const RegisterAccess& source) = default;
+
+    RegisterAccess& operator=(const U32& source)
+      {  if (proc)
+            proc->memoryState->setRegisterValue(RegID("fpscr").code, U32(source));
+         else
+            val = source;
+         return *this;
+      }
+    operator U32() const
+      {  return proc ? proc->memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("fpscr").code) : val; }
+
+  private:
+    U32 val;
+    int registerIndex;
+    Processor* proc;
+  };
+
+  RegisterAccess GetForeignRegister( uint8_t foreign_mode, uint32_t idx )
+    { return RegisterAccess(RLStartForeign + idx, *this); }
   U32  GetBankedRegister( uint8_t foreign_mode, uint32_t idx )
   {
     if ((cpsr.mode == foreign_mode) or
@@ -1247,7 +1348,7 @@ public:
         (idx >= 15) or
         ((foreign_mode != FIQ_MODE) and (cpsr.mode != FIQ_MODE) and (idx < 13))
         )
-      return GetGPR( idx );
+      return RegisterAccess( idx, *this );
     return U32( GetForeignRegister( foreign_mode, idx ) );
   }
     
@@ -1259,9 +1360,8 @@ public:
         ((foreign_mode != FIQ_MODE) and (cpsr.mode != FIQ_MODE) and (idx < 13))
         )
       return SetGPR( idx, value );
-    GetForeignRegister( foreign_mode, idx ) = value.expr;
+    GetForeignRegister( foreign_mode, idx ) = value;
   }
-#endif
     
   //   =====================================================================
   //   =              Special/System Registers access methods              =
@@ -1311,212 +1411,47 @@ public:
   //   =         Vector and Floating-point Registers access methods       =
   //   ====================================================================
 
-#if 0
   U32 RoundTowardsZeroFPSCR() const
   {
-    U32 fpscr = FPSCR;
+    U32 fpscr = memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("fpscr").code);
     unisim::component::cxx::processor::arm::RMode.Set( fpscr, U32(unisim::component::cxx::processor::arm::RoundTowardsZero) );
     return fpscr;
   }
     
   U32 RoundToNearestFPSCR() const
   {
-    U32 fpscr = FPSCR;
+    U32 fpscr = memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("fpscr").code);
     unisim::component::cxx::processor::arm::RMode.Set( fpscr, U32(unisim::component::cxx::processor::arm::RoundToNearest) );
     return fpscr;
   }
     
-  // U32 StandardValuedFPSCR() const   { return AHP.Mask( FPSCR ) | 0x03000000; }
-    
-  struct NeonName
-  { // Convenience class for name construction
-    NeonName( unsigned idx ) : begin(&buf[sizeof(buf)]) { _('\0'); do { _('0'+idx%10); idx /= 10; } while (idx); _('d'); }
-    void _(char c) { *--begin = c; } operator char const* () const { return begin; } char buf[4]; char* begin;
-  };
-  
-  struct NeonRead : public unisim::util::symbolic::binsec::RegRead
+  U64 eneonread( unsigned reg, unsigned size, unsigned pos )
   {
-    typedef NeonRead this_type;
-    typedef unisim::util::symbolic::binsec::RegRead Super;
-    NeonRead( unsigned _reg ) : Super(), reg(_reg) {}
-    virtual this_type* Mutate() const { return new this_type( *this ); }
-    virtual ScalarType::id_t GetType() const { return ScalarType::U64; }
-    virtual void GetRegName( std::ostream& sink ) const { sink << 'd' << std::dec << reg; }
-    virtual int cmp( ExprNode const& rhs ) const override { return compare( dynamic_cast<NeonRead const&>( rhs ) ); }
-    int compare( this_type const& rhs ) const { return int(reg) - int(rhs.reg); }
-    
-    unsigned reg;
-  };
-
-  struct NeonWrite : public unisim::util::symbolic::binsec::RegWrite
-  {
-    typedef NeonWrite this_type;
-    typedef unisim::util::symbolic::binsec::RegWrite Super;
-    NeonWrite( unsigned _reg, Expr const& value ) : Super(value), reg(_reg) {}
-    virtual this_type* Mutate() const { return new this_type( *this ); }
-    virtual ScalarType::id_t GetType() const { return ScalarType::VOID; }
-    virtual void GetRegName( std::ostream& sink ) const { sink << 'd' << std::dec << reg; }
-    virtual int cmp( ExprNode const& rhs ) const override { return compare( dynamic_cast<this_type const&>( rhs ) ); }
-    int compare( this_type const& rhs ) const { if (int delta = int(reg) - int(rhs.reg)) return delta; return Super::compare( rhs ); }
-    
-    unsigned reg;
-  };
-
-  struct NeonPartialWrite : public unisim::util::symbolic::binsec::RegWrite
-  {
-    typedef NeonPartialWrite this_type;
-    typedef unisim::util::symbolic::binsec::RegWrite Super;
-    typedef unisim::util::symbolic::binsec::Label Label;
-    typedef unisim::util::symbolic::binsec::Variables Variables;
-    typedef unisim::util::symbolic::binsec::GetCode GetCode;
-
-    NeonPartialWrite( unsigned _reg, unsigned _beg, unsigned _end, Expr const& _value ) : Super(_value), reg(_reg), beg(_beg), end(_end) {}
-    virtual this_type* Mutate() const { return new this_type( *this ); }
-    virtual ScalarType::id_t GetType() const { return ScalarType::VOID; }
-    virtual void GetRegName( std::ostream& sink ) const { sink << 'd' << std::dec << reg << '_' << beg << '_' << end; }
-    virtual int GenCode( Label& label, Variables& vars, std::ostream& sink ) const
-    {
-      sink << 'd' << std::dec << reg << '{' << beg << ',' << end << '}' << " := " << GetCode(value, vars, label);
-      return 0;
+    U64 res = memoryState->getRegisterValueAsMultiBit<uint64_t>(RLStartNeonRegs + reg);
+    if (pos > 0 || size < 64) {
+       res.reduce(pos, pos+size-1);
+       res.extendWithZero(64);
     }
-    virtual int cmp( ExprNode const& rhs ) const override { return compare( dynamic_cast<this_type const&>( rhs ) ); }
-    int compare( this_type const& rhs ) const
-    {
-      if (int delta = int(reg) - int(rhs.reg)) return delta;
-      if (int delta = int(beg) - int(rhs.beg)) return delta;
-      if (int delta = int(end) - int(rhs.end)) return delta;
-      return Super::compare( rhs );
-    }
-    
-    unsigned reg, beg, end;
-  };
-  
-  static unsigned const NEONSIZE = 8;
-
-  void
-  GetNeonSinks( unsigned reg )
-  {
-    using unisim::util::symbolic::binsec::BitFilter;
-    // using unisim::util::symbolic::make_const;
-    
-    { // Check for constant values
-      Expr dr = unisim::util::symbolic::binsec::ASExprNode::Simplify( GetVDU(reg).expr );
-      if (dr.ConstSimplify())
-        {
-          path->add_sink( new NeonWrite( reg, dr ) );
-          return;
-        }
-    }
-
-    // Check for monolithic value
-    if (not neonregs[reg][NEONSIZE/2].node)
-      {
-        path->add_sink( new NeonWrite( reg, eneonread(reg,NEONSIZE,0) ) );
-        return;
-      }
-    
-    // Requested read is a concatenation of multiple source values
-    struct _
-    {
-      _( Processor& _core, unsigned _reg ) : core(_core), reg(_reg) { Process( 0, NEONSIZE ); } Processor& core; unsigned reg;
-      void Process( unsigned pos, unsigned size )
-      {
-        unsigned half = size / 2, mid = pos+half;
-        if (size > 1 and core.neonregs[reg][mid].node)
-          {
-            Process( pos, half );
-            Process( mid, half );
-          }
-        else
-          {
-            unsigned begin = pos*8, end = begin+size*8;
-            Expr value( new BitFilter( core.eneonread(reg,size,pos), 64, size*8, size*8, false ) );
-            core.path->add_sink( new NeonPartialWrite( reg, begin, end, value ) );
-          }
-      }
-    } concat( *this, reg );
-  }
- 
-  Expr eneonread( unsigned reg, unsigned size, unsigned pos )
-  {
-    using unisim::util::symbolic::ExprNode;
-    using unisim::util::symbolic::make_const;
-    
-    struct
-    {
-      Expr ui( unsigned sz, Expr const& src ) const
-      {
-        switch (sz) {
-        default: throw 0;
-        case 1: return new unisim::util::symbolic::CastNode<uint8_t,uint64_t>( src );
-        case 2: return new unisim::util::symbolic::CastNode<uint16_t,uint64_t>( src );
-        case 4: return new unisim::util::symbolic::CastNode<uint32_t,uint64_t>( src );
-        case 8: return new unisim::util::symbolic::CastNode<uint64_t,uint64_t>( src );
-        }
-        return 0;
-      }
-    } cast;
-    
-    if (not neonregs[reg][pos].node)
-      {
-        // requested read is in the middle of a larger value
-        unsigned src = pos;
-        do { src = src & (src-1); } while (not neonregs[reg][src].node);
-        unsigned shift = 8*(pos - src);
-        return cast.ui( size, make_operation( "Lsr", neonregs[reg][src], make_const( shift ) ) );
-      }
-    else if (not neonregs[reg][(pos|size)&(NEONSIZE-1)].node)
-      {
-        // requested read is in lower bits of a larger value
-        return cast.ui( size, neonregs[reg][pos] );
-      }
-    else if ((size > 1) and (neonregs[reg][pos|(size >> 1)].node))
-      {
-        // requested read is a concatenation of multiple source values
-        Expr concat = cast.ui( size, neonregs[reg][pos] );
-        for (unsigned idx = 0; ++idx < size;)
-          {
-            if (not neonregs[reg][pos+idx].node)
-              continue;
-            concat = make_operation( "Or", make_operation( "Lsl", cast.ui( size, neonregs[reg][idx] ), make_const( 8*idx ) ), concat );
-          }
-        return concat;
-      }
-    
-    // requested read is directly available
-    return neonregs[reg][pos];
-  }
-  
-  void eneonwrite( unsigned reg, unsigned size, unsigned pos, Expr const& xpr )
-  {
-    Expr nxt[NEONSIZE];
-    
-    for (unsigned ipos = pos, isize = size, cpos;
-         cpos = (ipos^isize) & (NEONSIZE-1), (not neonregs[reg][ipos].node) or (not neonregs[reg][cpos].node);
-         isize *= 2, ipos &= -isize
-         )
-      {
-        nxt[cpos] = eneonread( reg, isize, cpos );
-      }
-    
-    for (unsigned ipos = 0; ipos < NEONSIZE; ++ipos)
-      {
-        if (nxt[ipos].node)
-          neonregs[reg][ipos] = nxt[ipos];
-      }
-    
-    neonregs[reg][pos] = xpr;
-    
-    for (unsigned rem = 1; rem < size; ++rem)
-      {
-        neonregs[reg][pos+rem] = 0;
-      }
+    return res;
   }
 
-  U32  GetVSU( unsigned idx ) { return U32( U64( eneonread( idx / 2, 4, (idx*4) & 4 ) ) ); }
-  void SetVSU( unsigned idx, U32 val ) { eneonwrite( idx / 2, 4, (idx*4) & 4, U64(val).expr ); }
-  U64  GetVDU( unsigned idx ) { return U64( eneonread( idx, 8, 0 ) ); }
-  void SetVDU( unsigned idx, U64 val ) { eneonwrite( idx, 8, 0, U64(val).expr ); }
+  void eneonwrite( unsigned reg, unsigned size, unsigned pos, const U64& xpr )
+  {
+    if (pos > 0 || size < 64) {
+       U64 res = memoryState->getRegisterValueAsMultiBit<uint64_t>(RLStartNeonRegs + reg);
+       U64 source = xpr;
+       source.reduce(0, size-1);
+       res.bitset(pos, pos+size-1, source);
+       memoryState->setRegisterValue(RLStartNeonRegs + reg, DomainValue(res));
+    }
+    else
+       memoryState->setRegisterValue(RLStartNeonRegs + reg, DomainValue(xpr));
+  }
+
+  U32  GetVSU( unsigned idx ) { return U32( eneonread( idx / 2, 4, (idx*4) & 4 ) ); }
+  void SetVSU( unsigned idx, U32 val ) { eneonwrite( idx / 2, 4, (idx*4) & 4, U64(val) ); }
+  U64  GetVDU( unsigned idx ) { return eneonread( idx, 8, 0 ); }
+  void SetVDU( unsigned idx, U64 val ) { eneonwrite( idx, 8, 0, U64(val) ); }
   F32  GetVSR( unsigned idx ) { return F32(); }
   void SetVSR( unsigned idx, F32 val ) {}
   F64  GetVDR( unsigned idx ) { return F64(); }
@@ -1532,24 +1467,6 @@ public:
   U16 ucast( S16 const& x ) { return U16(x); }
   U32 ucast( S32 const& x ) { return U32(x); }
   U64 ucast( S64 const& x ) { return U64(x); }
-  // Get|Set elements
-  template <class ELEMT>
-  void
-  SetVDE( unsigned reg, unsigned idx, ELEMT const& value )
-  {
-    using unisim::util::symbolic::binsec::BitFilter;
-    auto uvalue = ucast( value );
-    unsigned usz = usizeof( uvalue );
-    Expr neonval( new BitFilter( uvalue.expr, usz*8, usz*8, 64, false ) );
-    eneonwrite( reg, usz, usz*idx, neonval );
-  }
-
-  template <class ELEMT>
-  ELEMT GetVDE( unsigned reg, unsigned idx, ELEMT const& trait )
-  {
-    unsigned usz = usizeof( ucast(trait) );
-    return ELEMT( U64( eneonread( reg, usz, usz*idx ) ) );
-  }
   
   //   =====================================================================
   //   =                      Control Transfer methods                     =
@@ -1557,6 +1474,7 @@ public:
 
   void BranchExchange( U32 const& target, branch_type_t branch_type ) { SetNIA( target, branch_type ); }
   void Branch( U32 const& target, branch_type_t branch_type ) { SetNIA( target, branch_type ); }
+
     
   void WaitForInterrupt() { throw Unimplemented(); }
   void SWI( uint32_t imm ) { throw Unimplemented(); }
@@ -1568,18 +1486,27 @@ public:
   //   =                       Memory access methods                       =
   //   =====================================================================
   
-  U32  MemURead32( U32 const& addr ) { return U32( Expr( new Load( addr.expr, 2, 0, false ) ) ); }
-  U16  MemURead16( U32 const& addr ) { return U16( Expr( new Load( addr.expr, 1, 0, false ) ) ); }
-  U32  MemRead32( U32 const& addr ) { return U32( Expr( new Load( addr.expr, 2, 2, false ) ) ); }
-  U16  MemRead16( U32 const& addr ) { return U16( Expr( new Load( addr.expr, 1, 1, false ) ) ); }
-  U8   MemRead8( U32 const& addr ) { return U8( Expr( new Load( addr.expr, 0, 0, false ) ) ); }
+  U32  MemURead32( U32 const& addr )
+    { return memoryState->loadMultiBitValue<uint32_t>(addr); }
+  U16  MemURead16( U32 const& addr )
+    { return memoryState->loadMultiBitValue<uint16_t>(addr); }
+  U32  MemRead32( U32 const& addr )
+    { return memoryState->loadMultiBitValue<uint32_t>(addr); }
+  U16  MemRead16( U32 const& addr )
+    { return memoryState->loadMultiBitValue<uint16_t>(addr); }
+  U8  MemRead8( U32 const& addr )
+    { return memoryState->loadMultiBitValue<uint8_t>(addr); }
   
-  void MemUWrite32( U32 const& addr, U32 const& value ) { stores.insert( new Store( addr.expr, value.expr, 2, 0, false ) ); }
-  void MemUWrite16( U32 const& addr, U16 const& value ) { stores.insert( new Store( addr.expr, value.expr, 1, 0, false ) ); }
-  void MemWrite32( U32 const& addr, U32 const& value ) { stores.insert( new Store( addr.expr, value.expr, 2, 2, false ) ); }
-  void MemWrite16( U32 const& addr, U16 const& value ) { stores.insert( new Store( addr.expr, value.expr, 1, 1, false ) ); }
-  void MemWrite8( U32 const& addr, U8 const& value ) { stores.insert( new Store( addr.expr, value.expr, 0, 0, false ) ); }
-#endif
+  void MemUWrite32( U32 const& addr, U32 const& value )
+    { return memoryState->storeMultiBitValue<uint32_t>(addr, value); }
+  void MemUWrite16( U32 const& addr, U16 const& value )
+    { return memoryState->storeMultiBitValue<uint16_t>(addr, value); }
+  void MemWrite32( U32 const& addr, U32 const& value )
+    { return memoryState->storeMultiBitValue<uint32_t>(addr, value); }
+  void MemWrite16( U32 const& addr, U16 const& value )
+    { return memoryState->storeMultiBitValue<uint16_t>(addr, value); }
+  void MemWrite8( U32 const& addr, U8 const& value )
+    { return memoryState->storeMultiBitValue<uint8_t>(addr, value); }
     
   void SetExclusiveMonitors( U32 const& address, unsigned size ) { std::cerr << "SetExclusiveMonitors\n"; }
   bool ExclusiveMonitorsPass( U32 const& address, unsigned size ) { std::cerr << "ExclusiveMonitorsPass\n"; return true; }
@@ -1624,27 +1551,67 @@ public:
   /* mask for valid bits in processor control and status registers */
   static uint32_t const PSR_UNALLOC_MASK = 0x00f00000;
 
-#if 0
-  U32& SReg( SRegID reg )
-  {
-    if (reg.code == SRegID::end)
-      throw 0;
-    return sregs[reg.idx()];
-  }
-    
-
-  ActionNode*      path;
-  U32              reg_values[16];
-  U32              next_insn_addr;
-  Br::type_t       branch_type;
-  U32              spsr;
-  U32              sregs[SRegID::end];
-  U32              FPSCR, FPEXC;
-  std::set<Expr>   stores;
-  ForeignRegisters foreign_registers;
-  Expr             neonregs[32][NEONSIZE];
-#endif
   PSR              cpsr;
+  struct _FPSCR {
+    _FPSCR(Processor& aproc) : proc(&aproc) {}
+    _FPSCR(uint32_t aval) : val(aval), proc(nullptr) {}
+    _FPSCR(const U32& aval) : val(aval), proc(nullptr) {}
+    _FPSCR(const _FPSCR& source) = default;
+    _FPSCR& operator=(const _FPSCR& source) = default;
+
+    _FPSCR& operator=(const U32& source)
+      {  if (proc)
+            proc->memoryState->setRegisterValue(RegID("fpscr").code, U32(source));
+         else
+            val = source;
+         return *this;
+      }
+    operator U32() const
+      {  return proc ? proc->memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("fpscr").code) : val; }
+    operator BOOL() const
+      {  return proc ? BOOL(proc->memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("fpscr").code)) : val.operator BOOL(); }
+    template <typename TypeOperand>
+    U32 operator&(const TypeOperand& source) const { return this->operator U32() & source; }
+    template <typename TypeOperand>
+    U32 operator<<(const TypeOperand& source) const { return this->operator U32() << source; }
+    template <typename TypeOperand>
+    U32 operator>>(const TypeOperand& source) const { return this->operator U32() >> source; }
+    U32 operator~() const { return ~this->operator U32(); }
+
+  private:
+    U32 val;
+    Processor* proc;
+  }                FPSCR;
+  struct _FPEXC {
+    _FPEXC(Processor& aproc) : proc(&aproc) {}
+    _FPEXC(uint32_t aval) : val(aval), proc(nullptr) {}
+    _FPEXC(const U32& aval) : val(aval), proc(nullptr) {}
+    _FPEXC(const _FPEXC& source) = default;
+    _FPEXC& operator=(const _FPEXC& source) = default;
+
+    _FPEXC& operator=(const U32& source)
+      {  if (proc)
+            proc->memoryState->setRegisterValue(RegID("fpexc").code, U32(source));
+         else
+            val = source;
+         return *this;
+      }
+    operator U32() const
+      {  return proc ? proc->memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("fpexc").code) : val; }
+    operator BOOL() const
+      {  return proc ? BOOL(proc->memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("fpexc").code)) : val.operator BOOL(); }
+    template <typename TypeOperand>
+    U32 operator&(const TypeOperand& source) const { return this->operator U32() & source; }
+    template <typename TypeOperand>
+    U32 operator<<(const TypeOperand& source) const { return this->operator U32() << source; }
+    template <typename TypeOperand>
+    U32 operator>>(const TypeOperand& source) const { return this->operator U32() >> source; }
+    U32 operator~() const { return ~this->operator U32(); }
+
+  private:
+    U32 val;
+    Processor* proc;
+  }                FPEXC;
   bool             is_it_assigned; /* determines wether current instruction is an IT one. */
   Mode             mode;
   bool             unpredictable;
@@ -1691,14 +1658,70 @@ DomainBitValue::DomainBitValue(DomainBitElement&& value,
 //       Processor& processor, bool isSigned)
 //    :  DomainValue(std::move(value), processor), fSigned(isSigned) {}
    
+template < typename FLOAT >
 inline
-DomainMultiFloatValue::DomainMultiFloatValue(Processor& processor)
+DomainMultiFloatValue<FLOAT>::DomainMultiFloatValue(Processor& processor)
    : DomainValue(processor) {}
 
+template < typename FLOAT >
 inline
-DomainMultiFloatValue::DomainMultiFloatValue(DomainMultiFloatElement&& value,
+DomainMultiFloatValue<FLOAT>::DomainMultiFloatValue(DomainMultiFloatElement&& value,
       Processor& processor)
    :  DomainValue(std::move(value), processor) {}
+
+bool CheckCondition( Processor& state, unsigned cond )
+{
+  auto& cpsr = state.CPSR();
+  Processor::BOOL N = cpsr.n(), Z = cpsr.z(), C = cpsr.c(), V = cpsr.v(), result(false);
+  
+  switch (cond) {
+  case  0: result =                   Z; break; // eq; equal
+  case  1: result =               not Z; break; // ne; not equal
+  case  2: result =                   C; break; // cs/hs; unsigned higher or same
+  case  3: result =               not C; break; // cc/lo; unsigned lower
+  case  4: result =                   N; break; // mi; negative
+  case  5: result =               not N; break; // pl; positive or zero
+  case  6: result =                   V; break; // vs; overflow set
+  case  7: result =               not V; break; // vc; overflow clear
+  case  8: result =    not (not C or Z); break; // hi; unsigned higher
+  case  9: result =        (not C or Z); break; // ls; unsigned lower or same
+  case 10: result =       not (N xor V); break; // ge; signed greater than or equal
+  case 11: result =           (N xor V); break; // lt; signed less than
+  case 12: result = not(Z or (N xor V)); break; // gt; signed greater than
+  case 13: result =    (Z or (N xor V)); break; // le; signed less than or equal
+  case 14: return true;                         // al; always
+  default:                                      // nv; never (illegal)
+    throw std::logic_error( "bad condition" );
+  }
+
+  return state.Test(result);
+}
+
+bool CheckCondition( Processor& state, Processor::ITCond const& cond )
+{
+  typedef Processor::BOOL BOOL;
+  typedef Processor::U8   U8;
+  auto& cpsr = state.CPSR();
+  BOOL N = cpsr.n(), Z = cpsr.z(), C = cpsr.c(), V = cpsr.v();
+  U8 cc = (cpsr.GetITState() >> 4);
+  return state.Test(
+    ((cpsr.GetITState() & U8(0b1111)) == U8(0)) or // unconditional
+    ((cc == U8(0)) and (Z)) or // eq; equal
+    ((cc == U8(1)) and (not Z)) or // ne; not equal
+    ((cc == U8(2)) and (C)) or // cs/hs; unsigned higher or same
+    ((cc == U8(3)) and (not C)) or // cc/lo; unsigned lower
+    ((cc == U8(4)) and (N)) or // mi; negative
+    ((cc == U8(5)) and (not N)) or // pl; positive or zero
+    ((cc == U8(6)) and (V)) or // vs; overflow set
+    ((cc == U8(7)) and (not V)) or // vc; overflow clear
+    ((cc == U8(8)) and (not (not C or Z))) or // hi; unsigned higher
+    ((cc == U8(9)) and ((not C or Z))) or // ls; unsigned lower or same
+    ((cc == U8(10)) and (not (N xor V))) or // ge; signed greater than or equal
+    ((cc == U8(11)) and ((N xor V))) or // lt; signed less than
+    ((cc == U8(12)) and (not(Z or (N xor V)))) or // gt; signed greater than
+    ((cc == U8(13)) and ((Z or (N xor V)))) or // le; signed less than or equal
+    ((cc == U8(14)) and DomainBitValue(true)));
+}
 
 
 struct THUMBISA : public unisim::component::cxx::processor::arm::isa::thumb::Decoder<Processor>

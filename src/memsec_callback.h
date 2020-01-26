@@ -43,21 +43,21 @@ typedef struct _MemoryModelFunctions {
       DomainElementFunctions** elementFunctions);
 
   DomainElement (*load_multibit_value)(MemoryModel* memory,
-      DomainElement* indirect_address, size_t size, InterpretParameters* parameters,
+      DomainElement indirect_address, size_t size, InterpretParameters* parameters,
       unsigned* error, DomainElementFunctions** elementFunctions);
   DomainElement (*load_multibit_disjunctive_value)(MemoryModel* memory,
-      DomainElement* indirect_address, size_t size, InterpretParameters* parameters,
+      DomainElement indirect_address, size_t size, InterpretParameters* parameters,
       unsigned* error, DomainElementFunctions** elementFunctions);
   DomainElement (*load_multifloat_value)(MemoryModel* memory,
-      DomainElement* indirect_address, size_t size, InterpretParameters* parameters,
+      DomainElement indirect_address, size_t size, InterpretParameters* parameters,
       unsigned* error, DomainElementFunctions** elementFunctions);
 
-  void (*store_value)(MemoryModel* memory, DomainElement* indirect_address,
-      DomainElement* value, InterpretParameters* parameters, unsigned* error);
-  void (*constraint_store_value)(MemoryModel* memory, DomainElement* indirect_address,
-      DomainElement* value, unsigned indirect_register, InterpretParameters* parameters, unsigned* error);
-  void (*constraint_address)(MemoryModel* memory, DomainElement* indirect_address,
-      DomainElement* value, InterpretParameters* parameters, unsigned* error);
+  void (*store_value)(MemoryModel* memory, DomainElement indirect_address,
+      DomainElement value, InterpretParameters* parameters, unsigned* error);
+  void (*constraint_store_value)(MemoryModel* memory, DomainElement indirect_address,
+      DomainElement value, unsigned indirect_register, InterpretParameters* parameters, unsigned* error);
+  void (*constraint_address)(MemoryModel* memory, DomainElement indirect_address,
+      DomainElement value, InterpretParameters* parameters, unsigned* error);
 } MemoryModelFunctions;
 
 #ifdef __cplusplus

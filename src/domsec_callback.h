@@ -53,7 +53,8 @@ typedef enum _DomainBitCompareOperation
 
 typedef enum _DomainMultiBitUnaryOperation 
 {  DMBUOUndefined, DMBUOPrevSigned, DMBUOPrevUnsigned, DMBUONextSigned,
-   DMBUONextUnsigned, DMBUOBitNegate, DMBUOOppositeSigned, DMBUOOppositeFloat
+   DMBUONextUnsigned, DMBUOBitNegate, DMBUOOppositeSigned, DMBUOOppositeFloat,
+   DMBUOBitScanReverse
 } DomainMultiBitUnaryOperation;
 
 typedef enum _DomainMultiBitExtendType {
@@ -127,6 +128,10 @@ typedef enum _DomainMultiFloatTernaryOperation
 {
    DMFTOUndefined, DMFTOMultAdd, DMFTOMultSub, DMFTONegMultAdd, DMFTONegMultSub
 } DomainMultiFloatTernaryOperation;
+
+typedef enum _DomainMultiFloatQueryOperation
+{  DMFTQUndefined, DMFTQIsInvalid
+} DomainMultiFloatQueryOperation;
 
 typedef enum _DomainEvaluationError
 {  DEENoError=0, DEEPositiveOverflow=1<<1, DEENegativeOverflow=1<<2,
@@ -333,12 +338,17 @@ struct _DomainElementFunctions {
   DomainBitElement (*multifloat_binary_compare_domain)(DomainMultiFloatElement element,
       DomainMultiFloatCompareOperation operation, DomainMultiFloatElement source,
       DomainEvaluationEnvironment* env);
+  DomainMultiBitElement (*multifloat_binary_full_compare_domain)(DomainMultiFloatElement element,
+      DomainMultiFloatElement source, DomainEvaluationEnvironment* env);
   DomainMultiFloatElement (*multifloat_guard_assign)(DomainBitElement* condition,
       DomainMultiFloatElement* first, DomainMultiFloatElement* second,
       DomainEvaluationEnvironment* env);
   bool (*multifloat_ternary_apply_assign)(DomainMultiFloatElement* element,
       DomainMultiFloatTernaryOperation operation, DomainMultiFloatElement second,
       DomainMultiFloatElement third, DomainEvaluationEnvironment* env);
+  DomainBitElement (*multifloat_ternary_query)(
+      DomainMultiFloatElement multifloatDomain, DomainMultiFloatQueryOperation operation,
+      DomainMultiFloatElement first, DomainMultiFloatElement second, DomainEvaluationEnvironment* env);
   DomainMultiFloatElement (*multifloat_create_ternary_apply)(
       DomainMultiFloatElement element, DomainMultiFloatTernaryOperation operation,
       DomainMultiFloatElement second, DomainMultiFloatElement third,

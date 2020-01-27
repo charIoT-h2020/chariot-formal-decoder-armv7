@@ -4,6 +4,7 @@
 #include "unisim/util/identifier/identifier.hh"
 #include "unisim/util/likely/likely.hh"
 #include <functional>
+#include <cmath>
 #include "top_thumb.tcc"
 
 #include <cassert>
@@ -367,6 +368,8 @@ private:
   VALUE_TYPE uConstant;
   template <typename SRC_VALUE_TYPE>
   friend class DomainMultiBitValue;
+  template <typename SRC_VALUE_TYPE>
+  friend class DomainMultiFloatValue;
 
 public:
   typedef VALUE_TYPE value_type;
@@ -893,135 +896,274 @@ public:
 
 template <typename VALUE_TYPE>
 struct DomainMultiFloatValue : public DomainValue {
-  private:
-   typedef DomainMultiFloatValue<VALUE_TYPE> thisType;
-   VALUE_TYPE vtConstant;
+private:
+  typedef DomainMultiFloatValue<VALUE_TYPE> this_type;
+  typedef DomainValue inherited;
+  VALUE_TYPE vtConstant;
+  template <typename SRC_VALUE_TYPE>
+  friend class DomainMultiBitValue;
+  template <typename SRC_VALUE_TYPE>
+  friend class DomainMultiFloatValue;
 
-  public:
-   DomainMultiFloatValue() : vtConstant(0.0) {}
-   DomainMultiFloatValue(VALUE_TYPE val) : vtConstant(val) {}
-   DomainMultiFloatValue(Empty empty, const DomainValue& ref)
-      :  DomainValue(empty, ref) {}
-   DomainMultiFloatValue(DomainMultiFloatElement&& value, struct _DomainElementFunctions* functions, DomainEvaluationEnvironment* env)
-      :  DomainValue(std::move(value), functions, env) {}
-   DomainMultiFloatValue(Processor& processor);
+public:
+  DomainMultiFloatValue() : vtConstant(0.0) {}
+  DomainMultiFloatValue(VALUE_TYPE val) : vtConstant(val) {}
+  DomainMultiFloatValue(Empty empty, const DomainValue& ref)
+    : DomainValue(empty, ref), vtConstant(0.0) {}
+  DomainMultiFloatValue(DomainMultiFloatElement&& value, struct _DomainElementFunctions* functions, DomainEvaluationEnvironment* env)
+    : DomainValue(std::move(value), functions, env), vtConstant(0.0) {}
+  DomainMultiFloatValue(Processor& processor);
 
-   DomainMultiFloatValue(DomainMultiFloatElement&& value, Processor& processor);
-   DomainMultiFloatValue(DomainMultiFloatElement&& value, const DomainValue& source)
-      :  DomainValue(std::move(value), source) {}
-   explicit DomainMultiFloatValue(DomainFloatingPointConstant value, Processor& processor)
-      :  DomainValue(processor)
-      {  svalue() = (*functionTable().multifloat_create_constant)(value); }
-   DomainMultiFloatValue(DomainMultiFloatValue&& source) = default;
-   DomainMultiFloatValue(const DomainMultiFloatValue& source) = default;
-   DomainMultiFloatValue& operator=(DomainMultiFloatValue&& source) = default;
-   DomainMultiFloatValue& operator=(const DomainMultiFloatValue& source) = default;
+  DomainMultiFloatValue(DomainMultiFloatElement&& value, Processor& processor);
+  DomainMultiFloatValue(DomainMultiFloatElement&& value, const DomainValue& source)
+    : DomainValue(std::move(value), source) {}
+  explicit DomainMultiFloatValue(DomainFloatingPointConstant value, Processor& processor)
+    : DomainValue(processor)
+    { svalue() = (*functionTable().multifloat_create_constant)(value); }
+  DomainMultiFloatValue(DomainMultiFloatValue&& source) = default;
+  DomainMultiFloatValue(const DomainMultiFloatValue& source) = default;
+  DomainMultiFloatValue& operator=(DomainMultiFloatValue&& source) = default;
+  DomainMultiFloatValue& operator=(const DomainMultiFloatValue& source) = default;
 
-   template <class ResultType, int size>
-   DomainMultiFloatValue<ResultType> castToMultiFloat() const
-      {  return DomainMultiFloatValue<ResultType>((*functionTable().multifloat_cast_multifloat)(value(), size, env()), *this); }
-   template <class ResultType, int size>
-   DomainMultiBitValue<ResultType> castToMultiBit() const
-      {  return DomainMultiBitValue<ResultType>((*functionTable().multifloat_create_cast_multibit)(value(), size, env()), *this); }
+  template <class ResultType, int size>
+  DomainMultiFloatValue<ResultType> castToMultiFloat() const
+    {
+      if (inherited::isValid())
+        return DomainMultiFloatValue<ResultType>((*functionTable().multifloat_cast_multifloat)(value(), size, env()), *this);
+      else
+        return DomainMultiFloatValue<ResultType>((ResultType) vtConstant);
+    }
+  template <class ResultType, int size>
+  DomainMultiBitValue<ResultType> castToMultiBit() const
+    {
+      if (inherited::isValid())
+        return DomainMultiBitValue<ResultType>((*functionTable().multifloat_create_cast_multibit)(value(), size, env()), *this);
+      else
+        return DomainMultiBitValue<ResultType>((ResultType) vtConstant);
+    }
 
-   void setToConstant(DomainFloatingPointConstant value)
-      {  svalue() = (*functionTable().multifloat_create_constant)(value); }
-   void setToUndefined(int sizeInBits, bool isSymbolic)
-      {  svalue() = (*functionTable().multifloat_create_top)(sizeInBits, isSymbolic); }
+  void setToConstant(VALUE_TYPE value)
+    {
+      if (inherited::hasFunctionTable())
+        svalue() = (*functionTable().multifloat_create_constant)(
+              DomainFloatingPointConstant{sizeof(value), value});
+      else
+        vtConstant = value;
+    }
+  void setToUndefined(int sizeInBits, bool isSymbolic)
+    { svalue() = (*functionTable().multifloat_create_top)(sizeInBits, isSymbolic); }
 
-   DomainMultiFloatValue operator-() const
-      {  return DomainMultiFloatValue((*functionTable().multifloat_create_unary_apply)
-               (value(), DMFUOOpposite, env()), *this);
+  this_type applyUnary(DomainMultiFloatUnaryOperation operation,
+      std::function<VALUE_TYPE(VALUE_TYPE)> constantFunction) const
+    {
+      if (inherited::isValid())
+        return DomainMultiFloatValue((*functionTable().multifloat_create_unary_apply)
+            (value(), operation, env()), *this);
+      else
+        return DomainMultiFloatValue(constantFunction(vtConstant));
+    }
+  this_type& applyUnaryAssign(DomainMultiFloatUnaryOperation operation,
+      std::function<void(VALUE_TYPE&)> constantFunction)
+    {
+      if (inherited::isValid())
+        (*functionTable().multifloat_unary_apply_assign)
+            (&svalue(), operation, env());
+      else
+        constantFunction(vtConstant);
+      return *this;
+    }
+  this_type applyBinary(DomainMultiFloatBinaryOperation operation,
+      const DomainMultiFloatValue& source,
+      std::function<VALUE_TYPE(VALUE_TYPE, VALUE_TYPE)> constantFunction) const
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        return this_type((*functionTable().multifloat_create_binary_apply)
+            (value(), operation, source.value(), env()), *this);
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        this_type alt(Empty(), *this);
+        alt.setToConstant(source.vtConstant);
+        return applyBinary(operation, alt, constantFunction);
       }
-   DomainMultiFloatValue operator+(const DomainMultiFloatValue& source) const
-      {  return DomainMultiFloatValue((*functionTable().multifloat_create_binary_apply)
-               (value(), DMFBOPlus, source.value(), env()), *this);
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        this_type alt(Empty(), source);
+        alt.setToConstant(vtConstant);
+        alt.applyBinaryAssign(operation, source, constantFunction);
+        return std::move(alt);
       }
-   DomainMultiFloatValue operator-(const DomainMultiFloatValue& source) const
-      {  return DomainMultiFloatValue((*functionTable().multifloat_create_binary_apply)
-               (value(), DMFBOMinus, source.value(), env()), *this);
+      else
+        return this_type(constantFunction(vtConstant, source.vtConstant));
+    }
+  DomainBitValue applyCompare(DomainMultiFloatCompareOperation operation,
+      const this_type& source,
+      std::function<bool(VALUE_TYPE, VALUE_TYPE)> constantFunction) const
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        return DomainBitValue((*functionTable().multifloat_binary_compare_domain)
+            (value(), operation, source.value(), env()), *this);
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        this_type alt(Empty(), *this);
+        alt.setToConstant(source.vtConstant);
+        return applyCompare(operation, alt, constantFunction);
       }
-   DomainMultiFloatValue operator*(const DomainMultiFloatValue& source) const
-      {  return DomainMultiFloatValue((*functionTable().multifloat_create_binary_apply)
-               (value(), DMFBOTimes, source.value(), env()), *this);
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        this_type alt(Empty(), source);
+        alt.setToConstant(vtConstant);
+        return alt.applyCompare(operation, source, constantFunction);
       }
-   DomainMultiFloatValue operator/(const DomainMultiFloatValue& source) const
-      {  return DomainMultiFloatValue((*functionTable().multifloat_create_binary_apply)
-               (value(), DMFBODivide, source.value(), env()), *this);
+      else
+        return DomainBitValue(constantFunction(vtConstant, source.vtConstant));
+    }
+  this_type& applyBinaryAssign(DomainMultiFloatBinaryOperation operation,
+      const DomainMultiFloatValue& source,
+      std::function<VALUE_TYPE(VALUE_TYPE, VALUE_TYPE)> constantFunction)
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        (*functionTable().multifloat_binary_apply_assign)
+            (&svalue(), operation, source.value(), env());
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        DomainMultiFloatValue alt(Empty(), *this);
+        alt.setToConstant(source.vtConstant);
+        applyBinaryAssign(operation, alt, constantFunction);
       }
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        VALUE_TYPE thisConstant = vtConstant;
+        operator=(this_type(Empty(), source));
+        setToConstant(thisConstant);
+        applyBinaryAssign(operation, source, constantFunction);
+      }
+      else
+        vtConstant = constantFunction(vtConstant, source.vtConstant);
+      return *this;
+    }
 
-   DomainMultiFloatValue& operator+=(const DomainMultiFloatValue& source)
-      {  (*functionTable().multifloat_binary_apply_assign)
-               (&svalue(), DMFBOPlus, source.value(), env());
-         return *this;
-      }
-   DomainMultiFloatValue& operator-=(const DomainMultiFloatValue& source)
-      {  (*functionTable().multifloat_binary_apply_assign)
-               (&svalue(), DMFBOMinus, source.value(), env());
-         return *this;
-      }
-   DomainMultiFloatValue& operator*=(const DomainMultiFloatValue& source)
-      {  (*functionTable().multifloat_binary_apply_assign)
-               (&svalue(), DMFBOTimes, source.value(), env());
-         return *this;
-      }
-   DomainMultiFloatValue& operator/=(const DomainMultiFloatValue& source)
-      {  (*functionTable().multifloat_binary_apply_assign)
-               (&svalue(), DMFBODivide, source.value(), env());
-         return *this;
-      }
+  DomainMultiFloatValue operator-() const
+    { return applyUnary(DMFUOOpposite, [](VALUE_TYPE val) { return -val; }); }
+  DomainMultiFloatValue operator+(const DomainMultiFloatValue& source) const
+    { return applyBinary(DMFBOPlus, source,
+          [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst + snd; });
+    }
+  DomainMultiFloatValue operator-(const DomainMultiFloatValue& source) const
+    { return applyBinary(DMFBOMinus, source,
+          [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst - snd; });
+    }
+  DomainMultiFloatValue operator*(const DomainMultiFloatValue& source) const
+    { return applyBinary(DMFBOTimes, source,
+          [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst * snd; });
+    }
+  DomainMultiFloatValue operator/(const DomainMultiFloatValue& source) const
+    { return applyBinary(DMFBODivide, source,
+          [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst / snd; });
+    }
 
-   DomainMultiBitValue<int32_t> compare(const DomainMultiFloatValue& source) const
-      {  return DomainMultiBitValue<int32_t>((*functionTable().multifloat_binary_full_compare_domain)
-               (value(), source.value(), env()), *this);
-      }
-   DomainBitValue operator==(const DomainMultiFloatValue& source) const
-      {  return DomainBitValue((*functionTable().multifloat_binary_compare_domain)
-               (value(), DMFCOCompareEqual, source.value(), env()), *this);
-      }
-   DomainBitValue operator!=(const DomainMultiFloatValue& source) const
-      {  return DomainBitValue((*functionTable().multifloat_binary_compare_domain)
-               (value(), DMFCOCompareDifferent, source.value(), env()), *this);
-      }
-   DomainBitValue operator<=(const DomainMultiFloatValue& source) const
-      {  return DomainBitValue((*functionTable().multifloat_binary_compare_domain)
-               (value(), DMFCOCompareLessOrEqual, source.value(), env()), *this);
-      }
-   DomainBitValue operator>=(const DomainMultiFloatValue& source) const
-      {  return DomainBitValue((*functionTable().multifloat_binary_compare_domain)
-               (value(), DMFCOCompareGreaterOrEqual, source.value(), env()), *this);
-      }
-   DomainBitValue operator<(const DomainMultiFloatValue& source) const
-      {  return DomainBitValue((*functionTable().multifloat_binary_compare_domain)
-               (value(), DMFCOCompareLess, source.value(), env()), *this);
-      }
-   DomainBitValue operator>(const DomainMultiFloatValue& source) const
-      {  return DomainBitValue((*functionTable().multifloat_binary_compare_domain)
-               (value(), DMFCOCompareGreater, source.value(), env()), *this);
-      }
+  DomainMultiFloatValue& operator+=(const DomainMultiFloatValue& source)
+    { return applyBinaryAssign(DMFBOPlus, source,
+          [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst + snd; });
+    }
+  DomainMultiFloatValue& operator-=(const DomainMultiFloatValue& source)
+    { return applyBinaryAssign(DMFBOMinus, source,
+          [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst - snd; });
+    }
+  DomainMultiFloatValue& operator*=(const DomainMultiFloatValue& source)
+    { return applyBinaryAssign(DMFBOTimes, source,
+          [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst * snd; });
+    }
+  DomainMultiFloatValue& operator/=(const DomainMultiFloatValue& source)
+    { return applyBinaryAssign(DMFBODivide, source,
+          [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst / snd; });
+    }
 
-   bool isConstant(DomainFloatingPointConstant* value) const
-      {  return (*functionTable().multifloat_is_constant_value)(this->value(), value); }
-   void setToNaN();
-   void setQuietBit();
-   DomainBitValue setFlushToZero();
-   DomainBitValue queryIsSNaN() const;
-   DomainBitValue queryIsQNaN() const;
+  DomainMultiBitValue<int32_t> compare(const DomainMultiFloatValue& source) const
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+       return DomainMultiBitValue<int32_t>((*functionTable().multifloat_binary_full_compare_domain)
+          (value(), source.value(), env()), *this);
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        this_type alt(Empty(), *this);
+        alt.setToConstant(source.vtConstant);
+        return compare(alt);
+      }
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        this_type alt(Empty(), source);
+        alt.setToConstant(vtConstant);
+        return alt.compare(source);
+      }
+      else
+        return DomainMultiBitValue<int32_t>((vtConstant < source.vtConstant)
+            ? -1 : ((vtConstant > source.vtConstant) ? +1 : 0)); // also NaN
+    }
+  DomainBitValue operator==(const DomainMultiFloatValue& source) const
+    { return applyCompare(DMFCOCompareEqual, source,
+        [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst == snd; });
+    }
+  DomainBitValue operator!=(const DomainMultiFloatValue& source) const
+    { return applyCompare(DMFCOCompareDifferent, source,
+        [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst != snd; });
+    }
+  DomainBitValue operator<=(const DomainMultiFloatValue& source) const
+    { return applyCompare(DMFCOCompareLessOrEqual, source,
+        [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst <= snd; });
+    }
+  DomainBitValue operator>=(const DomainMultiFloatValue& source) const
+    { return applyCompare(DMFCOCompareGreaterOrEqual, source,
+        [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst >= snd; });
+    }
+  DomainBitValue operator<(const DomainMultiFloatValue& source) const
+    { return applyCompare(DMFCOCompareLess, source,
+        [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst < snd; });
+    }
+  DomainBitValue operator>(const DomainMultiFloatValue& source) const
+    { return applyCompare(DMFCOCompareGreater, source,
+        [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst > snd; });
+    }
 
-   void multAssignAndAdd(const thisType& op1, const thisType& op2)
-      {  (*functionTable().multifloat_ternary_apply_assign)
-               (&svalue(), DMFTOMultAdd, op1.value(), op2.value(), env());
+  bool isConstant(VALUE_TYPE* value) const
+    {
+      if (inherited::isValid()) {
+        DomainFloatingPointConstant res;
+        res.sizeInBits = sizeof(VALUE_TYPE);
+        bool result = (*functionTable().multifloat_is_constant_value)(this->value(), &res);
+        if (result && value)
+           *value = (VALUE_TYPE) res.floatValue;
+        return result;
       }
-   DomainBitValue queryIsInvalidMulAddNode(const thisType& op1, const thisType& op2) const
-      {  return DomainBitValue((*functionTable().multifloat_ternary_query)
-               (value(), DMFTQIsInvalid, op1.value(), op2.value(), env()), *this);
+      else
+      {
+        if (value)
+          *value = vtConstant;
+        return true;
       }
-   void negateAssign()
-      {  (*functionTable().multifloat_unary_apply_assign)(&svalue(), DMFUOOpposite, env()); }
-   void absAssign()
-      {  (*functionTable().multifloat_unary_apply_assign)(&svalue(), DMFUOAbs, env()); }
-   void sqrtAssign()
-      {  (*functionTable().multifloat_unary_apply_assign)(&svalue(), DMFUOSqrt, env()); }
+    }
+
+  void setToNaN();
+  void setQuietBit();
+  DomainBitValue setFlushToZero();
+  DomainBitValue queryIsSNaN() const;
+  DomainBitValue queryIsQNaN() const;
+
+  // used with arguments coming from Processor
+  void multAssignAndAdd(const this_type& op1, const this_type& op2)
+    {  (*functionTable().multifloat_ternary_apply_assign)
+          (&svalue(), DMFTOMultAdd, op1.value(), op2.value(), env());
+    }
+  // used with arguments coming from Processor
+  DomainBitValue queryIsInvalidMulAddNode(const this_type& op1, const this_type& op2) const
+    {  return DomainBitValue((*functionTable().multifloat_ternary_query)
+          (value(), DMFTQIsInvalid, op1.value(), op2.value(), env()), *this);
+    }
+  void negateAssign()
+    { applyUnary(DMFUOOpposite, [](VALUE_TYPE val) { return -val; }); }
+  void absAssign()
+    { applyUnary(DMFUOAbs, [](VALUE_TYPE val) { return std::abs(val); }); }
+  void sqrtAssign()
+    { applyUnary(DMFUOSqrt, [](VALUE_TYPE val) { return std::sqrt(val); }); }
 };
 
 class MemoryState {

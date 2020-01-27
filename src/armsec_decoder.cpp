@@ -1178,6 +1178,10 @@ class MemoryState {
    MemoryState()
       :  pmModel(nullptr), pfFunctions(nullptr), pParameters(nullptr),
          peDomainEnv(nullptr), uErrors(0U) {}
+   MemoryState(MemoryModel* model, struct _MemoryModelFunctions* functions,
+         InterpretParameters* parameters)
+      :  pmModel(model), pfFunctions(functions), pParameters(parameters),
+         peDomainEnv(nullptr), uErrors(0U) {}
    MemoryState(Processor& proc);
 
    bool hasError() const { return uErrors; }
@@ -2238,10 +2242,8 @@ struct Translator
   
   template <class ISA>
   void
-  extract( std::ostream& sink, ISA& isa )
+  extract( ISA& isa )
   {
-    sink << "(address . " << addr << ")\n";
-  
     // Instruction decoding
     struct Instruction
     {
@@ -2268,16 +2270,12 @@ struct Translator
       uint32_t encoding = instruction->GetEncoding();
       if (instruction.bytecount == 2)
         encoding &= 0xffff;
-      
-      sink << "(opcode . " << encoding << ")\n(size . " << (instruction.bytecount) << ")\n";
     }
     
     // Disassemble
-    sink << "(mnemonic . \"";
     Processor state;
-    try { instruction->disasm( state, sink ); }
-    catch (...) { sink << "(bad)"; }
-    sink << "\")\n";
+    try { instruction->execute( state ); }
+    catch (...) { throw; }
     
     // Get actions
     bool is_thumb = status.IsThumb();
@@ -2295,7 +2293,7 @@ struct Translator
       }
   }
 
-  void translate( std::ostream& sink )
+  void next_targets()
   {
     try
       {
@@ -2308,20 +2306,45 @@ struct Translator
         else if (status.iset == status.Thumb)
           {
             THUMBISA thumbisa;
-            extract( sink, thumbisa );
+            extract( thumbisa );
           }
         else
           throw 0;
       }
     catch (Processor::Undefined const&)
       {
-        sink << "(undefined)\n";
-        return;
+        throw;
       }
     catch (...)
       {
-        sink << "(unimplemented)\n";
-        return;
+        throw;
+      }
+  }
+  void interpret()
+  {
+    try
+      {
+        if      (status.iset == status.Arm)
+          {
+            assert(false);
+            // ARMISA armisa;
+            // extract( sink, armisa );
+          }
+        else if (status.iset == status.Thumb)
+          {
+            THUMBISA thumbisa;
+            extract( thumbisa );
+          }
+        else
+          throw 0;
+      }
+    catch (Processor::Undefined const&)
+      {
+        throw;
+      }
+    catch (...)
+      {
+        throw;
       }
   }
 
@@ -2342,15 +2365,42 @@ DLL_API bool armsec_next_targets(void* processor, char* instruction_buffer,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,
       InterpretParameters* parameters, uint64_t* result_addresses,
       int* result_length) {
-   Processor* proc = reinterpret_cast<Processor*>(processor);
+  Processor* proc = reinterpret_cast<Processor*>(processor);
+  proc->setMemoryFunctions(*memory_functions);
+  MemoryState memoryState(memory, memory_functions, parameters);
+  proc->setMemoryState(memoryState);
+  proc->setInterpretParameters(*parameters);
 
+  uint32_t code;
+  memcpy(&code, instruction_buffer, sizeof(code));
+  unisim::util::endian::ByteSwap(code);
+
+  Translator actset( address, code );
+  Processor::StatusRegister& status = actset.status;
+  status.iset = status.Thumb;
+  actset.next_targets();
+  return true;
 }
 
 DLL_API bool armsec_interpret(void* processor, char* instruction_buffer,
       size_t buffer_size, uint64_t address, uint64_t target_address,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,
       InterpretParameters* parameters) {
+  Processor* proc = reinterpret_cast<Processor*>(processor);
+  proc->setMemoryFunctions(*memory_functions);
+  MemoryState memoryState(memory, memory_functions, parameters);
+  proc->setMemoryState(memoryState);
+  proc->setInterpretParameters(*parameters);
 
+  uint32_t code;
+  memcpy(&code, instruction_buffer, sizeof(code));
+  unisim::util::endian::ByteSwap(code);
+
+  Translator actset( address, code );
+  Processor::StatusRegister& status = actset.status;
+  status.iset = status.Thumb;
+  actset.interpret();
+  return true;
 }
 
 }

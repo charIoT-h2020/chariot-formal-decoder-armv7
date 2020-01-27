@@ -58,204 +58,465 @@ struct ScalarType
 
 struct Processor;
 class MemoryState;
-class DomainValue {
-  private:
-   DomainElement deValue;
-   struct _DomainElementFunctions* pfFunctions;
-   DomainEvaluationEnvironment* peEnv;
+class DomainValue
+{
+private:
+  DomainElement deValue;
+  struct _DomainElementFunctions* pfFunctions;
+  DomainEvaluationEnvironment* peEnv;
 
-  protected:
-   friend class MemoryState;
-   DomainElement& svalue() { return deValue; }
-   bool hasFunctionTable() const { return pfFunctions; }
-   struct _DomainElementFunctions& functionTable() const { assert(pfFunctions); return *pfFunctions; }
-   DomainEvaluationEnvironment* env() const { return peEnv; }
+protected:
+  friend class MemoryState;
+  DomainElement& svalue() { return deValue; }
+  bool hasFunctionTable() const { return pfFunctions; }
+  struct _DomainElementFunctions& functionTable() const { assert(pfFunctions); return *pfFunctions; }
+  DomainEvaluationEnvironment* env() const { return peEnv; }
 
-  public:
-   const DomainElement& value() const { return deValue; }
-  public:
-   DomainValue() : pfFunctions(nullptr), peEnv(nullptr) {}
-   class Empty {};
-   DomainValue(Empty, const DomainValue& ref)
-      :  deValue(DomainBitElement{}), pfFunctions(ref.pfFunctions), peEnv(ref.peEnv) {}
-   DomainValue(DomainElement&& value, struct _DomainElementFunctions* functions, DomainEvaluationEnvironment* env)
-      :  deValue(std::move(value)), pfFunctions(functions), peEnv(env) {}
-   DomainValue(Processor& processor);
-   DomainValue(DomainElement&& value, Processor& processor);
-   DomainValue(DomainElement&& value, const DomainValue& source)
-      :  deValue(value), pfFunctions(source.pfFunctions),
-         peEnv(source.peEnv)
-      {  value.content = nullptr; }
-   DomainValue(DomainValue&& source)
-      :  deValue(source.deValue), pfFunctions(source.pfFunctions),
-         peEnv(source.peEnv)
-      {  source.deValue.content = nullptr; }
-   DomainValue(const DomainValue& source)
-      :  deValue{ nullptr }, pfFunctions(source.pfFunctions),
-         peEnv(source.peEnv)
-      {  if (source.deValue.content) {
-            assert(pfFunctions);
-            deValue = (*pfFunctions->clone)(source.deValue);
-         }
-      }
-   DomainValue& operator=(DomainValue&& source)
-      {  if (this == &source)
-            return *this;
-         if (deValue.content) {
-            assert(pfFunctions);
-            (*pfFunctions->free)(&deValue);
-         }
-         pfFunctions = source.pfFunctions;
-         peEnv = source.peEnv;
-         deValue = source.deValue;
-         source.deValue.content = nullptr;
-         return *this;
-      }
-   DomainValue& operator=(const DomainValue& source)
-      {  if (this == &source)
-            return *this;
-         if (deValue.content)
-            (*pfFunctions->free)(&deValue);
-         pfFunctions = source.pfFunctions;
-         peEnv = source.peEnv;
-         if (source.deValue.content) {
-            assert(pfFunctions);
-            deValue = (*pfFunctions->clone)(source.deValue);
-         }
-         return *this;
-      }
-   ~DomainValue()
-      {  if (deValue.content && pfFunctions) (*pfFunctions->free)(&deValue); }
+public:
+  const DomainElement& value() const { return deValue; }
 
-   void clear()
-      {  if (deValue.content) {
-            assert(pfFunctions);
-            (*pfFunctions->free)(&deValue);
-         }
+public:
+  DomainValue() : pfFunctions(nullptr), peEnv(nullptr) {}
+  class Empty {};
+  DomainValue(Empty, const DomainValue& ref)
+    : deValue(DomainBitElement{}), pfFunctions(ref.pfFunctions), peEnv(ref.peEnv) {}
+  DomainValue(DomainElement&& value, struct _DomainElementFunctions* functions, DomainEvaluationEnvironment* env)
+    : deValue(std::move(value)), pfFunctions(functions), peEnv(env) {}
+  DomainValue(Processor& processor);
+  DomainValue(DomainElement&& value, Processor& processor);
+  DomainValue(DomainElement&& value, const DomainValue& source)
+    : deValue(value), pfFunctions(source.pfFunctions), peEnv(source.peEnv)
+    { value.content = nullptr; }
+  DomainValue(DomainValue&& source)
+    : deValue(source.deValue), pfFunctions(source.pfFunctions), peEnv(source.peEnv)
+    { source.deValue.content = nullptr; }
+  DomainValue(const DomainValue& source)
+    : deValue{ nullptr }, pfFunctions(source.pfFunctions), peEnv(source.peEnv)
+    {
+      if (source.deValue.content) {
+        assert(pfFunctions);
+        deValue = (*pfFunctions->clone)(source.deValue);
       }
-   bool isValid() const { return deValue.content; }
-   DomainType getType() const
-      {  assert(pfFunctions);
-         return (*pfFunctions->get_type)(deValue);
-      } 
-   ZeroResult queryZeroResult() const
-      {  assert(pfFunctions);
-         return (*pfFunctions->query_zero_result)(deValue);
-      } 
-   int getSizeInBits() const
-      {  assert(pfFunctions);
-         return (*pfFunctions->get_size_in_bits)(deValue);
-      } 
+    }
+  DomainValue& operator=(DomainValue&& source)
+    {
+      if (this == &source)
+        return *this;
+      if (deValue.content)
+      {
+        assert(pfFunctions);
+        (*pfFunctions->free)(&deValue);
+      }
+      pfFunctions = source.pfFunctions;
+      peEnv = source.peEnv;
+      deValue = source.deValue;
+      source.deValue.content = nullptr;
+      return *this;
+    }
+  DomainValue& operator=(const DomainValue& source)
+    {
+      if (this == &source)
+        return *this;
+      if (deValue.content)
+        (*pfFunctions->free)(&deValue);
+      pfFunctions = source.pfFunctions;
+      peEnv = source.peEnv;
+      if (source.deValue.content)
+      {
+        assert(pfFunctions);
+        deValue = (*pfFunctions->clone)(source.deValue);
+      }
+      return *this;
+    }
+  ~DomainValue()
+    { if (deValue.content && pfFunctions) (*pfFunctions->free)(&deValue); }
+
+  void clear()
+    {
+      if (deValue.content)
+      {
+        assert(pfFunctions);
+        (*pfFunctions->free)(&deValue);
+      }
+    }
+  bool isValid() const { return deValue.content; }
+  DomainType getType() const
+    {
+      assert(pfFunctions);
+      return (*pfFunctions->get_type)(deValue);
+    } 
+  ZeroResult queryZeroResult() const
+    {
+      assert(pfFunctions);
+      return (*pfFunctions->query_zero_result)(deValue);
+    } 
+  int getSizeInBits() const
+    {
+      assert(pfFunctions);
+      return (*pfFunctions->get_size_in_bits)(deValue);
+    } 
 };
 
 extern DomainValue getRootDomainValue();
 
 //class DomainMultiBitValue;
-class DomainBitValue : public DomainValue {
-  public:
-   DomainBitValue() {}
-   DomainBitValue(Empty empty, const DomainValue& ref)
-      :  DomainValue(empty, ref) {}
-   DomainBitValue(DomainBitElement&& value, struct _DomainElementFunctions* functions, DomainEvaluationEnvironment* env)
-      :  DomainValue(std::move(value), functions, env) {}
-   DomainBitValue(Processor& processor);
-   DomainBitValue(DomainBitElement&& value, Processor& processor);
-   DomainBitValue(DomainBitElement&& value, const DomainValue& source);
-   explicit DomainBitValue(bool value, Processor& processor)
-      :  DomainValue(processor)
-      {  svalue() = (*functionTable().bit_create_constant)(value); }
-   explicit DomainBitValue( bool value )
-     : DomainValue(getRootDomainValue())
-     {  svalue() = (*functionTable().bit_create_constant)(value); }
+class DomainBitValue : public DomainValue
+{
+private:
+  typedef DomainValue inherited;
+  bool fConstant;
 
-   DomainBitValue(DomainBitValue&& source) = default;
-   DomainBitValue(const DomainBitValue& source) = default;
-   DomainBitValue& operator=(DomainBitValue&& source) = default;
-   DomainBitValue& operator=(const DomainBitValue& source) = default;
+public:
+  DomainBitValue() : fConstant(false) {}
+  DomainBitValue(Empty empty, const DomainValue& ref)
+    : DomainValue(empty, ref), fConstant(false) {}
+  DomainBitValue(DomainBitElement&& value, struct _DomainElementFunctions* functions, DomainEvaluationEnvironment* env)
+    : DomainValue(std::move(value), functions, env), fConstant(false) {}
+  DomainBitValue(Processor& processor);
+  DomainBitValue(DomainBitElement&& value, Processor& processor);
+  DomainBitValue(DomainBitElement&& value, const DomainValue& source);
+  explicit DomainBitValue(bool value, Processor& processor)
+    : DomainValue(processor), fConstant(false)
+    { svalue() = (*functionTable().bit_create_constant)(value); }
+  explicit DomainBitValue( bool value )
+    : DomainValue(), fConstant(value) {}
 
-   DomainBitValue& setToConstant(bool value)
-      {  svalue() = (*functionTable().bit_create_constant)(value); return *this; }
-   DomainBitValue& setToUndefined(bool isSymbolic)
-      {  svalue() = (*functionTable().bit_create_top)(isSymbolic); return *this; }
+  DomainBitValue(DomainBitValue&& source) = default;
+  DomainBitValue(const DomainBitValue& source) = default;
+  DomainBitValue& operator=(DomainBitValue&& source) = default;
+  DomainBitValue& operator=(const DomainBitValue& source) = default;
 
-   DomainBitValue operator~() const
-      {  return DomainBitValue((*functionTable().bit_create_unary_apply)
-               (value(), DBUONegate, env()), *this);
-      }
-   DomainBitValue operator!() const
-      {  return DomainBitValue((*functionTable().bit_create_unary_apply)
-               (value(), DBUONegate, env()), *this);
-      }
-   DomainBitValue operator|(const DomainBitValue& source) const
-      {  return DomainBitValue((*functionTable().bit_create_binary_apply)
-               (value(), DBBOOr, source.value(), env()), *this);
-      }
-   DomainBitValue operator&(const DomainBitValue& source) const
-      {  return DomainBitValue((*functionTable().bit_create_binary_apply)
-               (value(), DBBOAnd, source.value(), env()), *this);
-      }
-   DomainBitValue operator^(const DomainBitValue& source) const
-      {  return DomainBitValue((*functionTable().bit_create_binary_apply)
-               (value(), DBBOExclusiveOr, source.value(), env()), *this);
-      }
-   DomainBitValue operator||(const DomainBitValue& source) const
-      {  return DomainBitValue((*functionTable().bit_create_binary_apply)
-               (value(), DBBOOr, source.value(), env()), *this);
-      }
-   DomainBitValue operator&&(const DomainBitValue& source) const
-      {  return DomainBitValue((*functionTable().bit_create_binary_apply)
-               (value(), DBBOAnd, source.value(), env()), *this);
-      }
+  DomainBitValue& setToConstant(bool value)
+    {
+      if (inherited::isValid())
+        svalue() = (*functionTable().bit_create_constant)(value);
+      else
+        fConstant = value;
+      return *this;
+    }
 
-   DomainBitValue& operator|=(const DomainBitValue& source)
-      {  (*functionTable().bit_binary_apply_assign)
-               (&svalue(), DBBOOr, source.value(), env());
-         return *this;
-      }
-   DomainBitValue operator&=(const DomainBitValue& source)
-      {  (*functionTable().bit_binary_apply_assign)
-               (&svalue(), DBBOAnd, source.value(), env());
-         return *this;
-      }
-   DomainBitValue operator^=(const DomainBitValue& source)
-      {  (*functionTable().bit_binary_apply_assign)
-               (&svalue(), DBBOExclusiveOr, source.value(), env());
-         return *this;
-      }
+  DomainBitValue& setToUndefined(bool isSymbolic)
+    { svalue() = (*functionTable().bit_create_top)(isSymbolic); return *this; }
 
-   DomainBitValue operator==(const DomainBitValue& source) const
-      {  return DomainBitValue((*functionTable().bit_binary_compare_domain)
-               (value(), DBCOCompareEqual, source.value(), env()), *this);
-         return *this;
+  DomainBitValue operator~() const
+    { 
+      if (inherited::isValid())
+        return DomainBitValue((*functionTable().bit_create_unary_apply)
+            (value(), DBUONegate, env()), *this);
+      else
+        return DomainBitValue(~fConstant);
+    }
+  DomainBitValue operator!() const
+    { 
+      if (inherited::isValid())
+        return DomainBitValue((*functionTable().bit_create_unary_apply)
+            (value(), DBUONegate, env()), *this);
+      else
+        return DomainBitValue(!fConstant);
+    }
+  DomainBitValue operator|(const DomainBitValue& source) const
+    { 
+      if (inherited::isValid() && source.inherited::isValid())
+        return DomainBitValue((*functionTable().bit_create_binary_apply)
+            (value(), DBBOOr, source.value(), env()), *this);
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), *this);
+        alt.setToConstant(source.fConstant);
+        return *this | alt;
       }
-   DomainBitValue operator!=(const DomainBitValue& source) const
-      {  return DomainBitValue((*functionTable().bit_binary_compare_domain)
-               (value(), DBCOCompareDifferent, source.value(), env()), *this);
-         return *this;
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), source);
+        alt.setToConstant(fConstant);
+        alt |= source;
+        return std::move(alt);
       }
-   DomainBitValue operator<=(const DomainBitValue& source) const
-      {  return DomainBitValue((*functionTable().bit_binary_compare_domain)
-               (value(), DBCOCompareLessOrEqual, source.value(), env()), *this);
-         return *this;
+      else
+        return DomainBitValue(fConstant | source.fConstant);
+    }
+  DomainBitValue operator&(const DomainBitValue& source) const
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        return DomainBitValue((*functionTable().bit_create_binary_apply)
+            (value(), DBBOAnd, source.value(), env()), *this);
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), *this);
+        alt.setToConstant(source.fConstant);
+        return *this & alt;
       }
-   DomainBitValue operator>=(const DomainBitValue& source) const
-      {  return DomainBitValue((*functionTable().bit_binary_compare_domain)
-               (value(), DBCOCompareGreaterOrEqual, source.value(), env()), *this);
-         return *this;
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), source);
+        alt.setToConstant(fConstant);
+        alt &= source;
+        return std::move(alt);
       }
-   DomainBitValue operator<(const DomainBitValue& source) const
-      {  return DomainBitValue((*functionTable().bit_binary_compare_domain)
-               (value(), DBCOCompareLess, source.value(), env()), *this);
-         return *this;
+      else
+        return DomainBitValue(fConstant & source.fConstant);
+    }
+  DomainBitValue operator^(const DomainBitValue& source) const
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        return DomainBitValue((*functionTable().bit_create_binary_apply)
+            (value(), DBBOExclusiveOr, source.value(), env()), *this);
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), *this);
+        alt.setToConstant(source.fConstant);
+        return *this ^ alt;
       }
-   DomainBitValue operator>(const DomainBitValue& source) const
-      {  return DomainBitValue((*functionTable().bit_binary_compare_domain)
-               (value(), DBCOCompareGreater, source.value(), env()), *this);
-         return *this;
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), source);
+        alt.setToConstant(fConstant);
+        alt ^= source;
+        return std::move(alt);
       }
+      else
+        return DomainBitValue(fConstant ^ source.fConstant);
+    }
+  DomainBitValue operator||(const DomainBitValue& source) const
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        return DomainBitValue((*functionTable().bit_create_binary_apply)
+            (value(), DBBOOr, source.value(), env()), *this);
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), *this);
+        alt.setToConstant(source.fConstant);
+        return *this || alt;
+      }
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), source);
+        alt.setToConstant(fConstant);
+        return alt || *this;
+      }
+      else
+        return DomainBitValue(fConstant || source.fConstant);
+    }
+  DomainBitValue operator&&(const DomainBitValue& source) const
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        return DomainBitValue((*functionTable().bit_create_binary_apply)
+            (value(), DBBOAnd, source.value(), env()), *this);
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), *this);
+        alt.setToConstant(source.fConstant);
+        return *this && alt;
+      }
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), source);
+        alt.setToConstant(fConstant);
+        return alt && *this;
+      }
+      else
+        return DomainBitValue(fConstant && source.fConstant);
+    }
 
-   bool isConstant(bool* value) const
-      {  return (*functionTable().bit_is_constant_value)(this->value(), value); }
+  DomainBitValue& operator|=(const DomainBitValue& source)
+    { 
+      if (inherited::isValid() && source.inherited::isValid())
+        (*functionTable().bit_binary_apply_assign)
+            (&svalue(), DBBOOr, source.value(), env());
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), *this);
+        alt.setToConstant(source.fConstant);
+        return *this |= alt;
+      }
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        bool thisConstant = fConstant;
+        operator=(DomainBitValue(Empty(), source));
+        setToConstant(thisConstant);
+        return *this |= source;
+      }
+      else
+        fConstant |= source.fConstant;
+      return *this;
+    }
+  DomainBitValue operator&=(const DomainBitValue& source)
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        (*functionTable().bit_binary_apply_assign)
+            (&svalue(), DBBOAnd, source.value(), env());
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), *this);
+        alt.setToConstant(source.fConstant);
+        return *this &= alt;
+      }
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        bool thisConstant = fConstant;
+        operator=(DomainBitValue(Empty(), source));
+        setToConstant(thisConstant);
+        return *this &= source;
+      }
+      else
+        fConstant &= source.fConstant;
+      return *this;
+    }
+  DomainBitValue operator^=(const DomainBitValue& source)
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        (*functionTable().bit_binary_apply_assign)
+            (&svalue(), DBBOExclusiveOr, source.value(), env());
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), *this);
+        alt.setToConstant(source.fConstant);
+        return *this ^= alt;
+      }
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        bool thisConstant = fConstant;
+        operator=(DomainBitValue(Empty(), source));
+        setToConstant(thisConstant);
+        return *this ^= source;
+      }
+      else
+        fConstant ^= source.fConstant;
+      return *this;
+    }
+
+  DomainBitValue operator==(const DomainBitValue& source) const
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        return DomainBitValue((*functionTable().bit_binary_compare_domain)
+            (value(), DBCOCompareEqual, source.value(), env()), *this);
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), *this);
+        alt.setToConstant(source.fConstant);
+        return *this == alt;
+      }
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), source);
+        alt.setToConstant(fConstant);
+        return alt == source;
+      }
+      else
+        return DomainBitValue(fConstant == source.fConstant);
+    }
+  DomainBitValue operator!=(const DomainBitValue& source) const
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        return DomainBitValue((*functionTable().bit_binary_compare_domain)
+            (value(), DBCOCompareDifferent, source.value(), env()), *this);
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), *this);
+        alt.setToConstant(source.fConstant);
+        return *this != alt;
+      }
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), source);
+        alt.setToConstant(fConstant);
+        return alt != source;
+      }
+      else
+        return DomainBitValue(fConstant != source.fConstant);
+    }
+  DomainBitValue operator<=(const DomainBitValue& source) const
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        return DomainBitValue((*functionTable().bit_binary_compare_domain)
+            (value(), DBCOCompareLessOrEqual, source.value(), env()), *this);
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), *this);
+        alt.setToConstant(source.fConstant);
+        return *this <= alt;
+      }
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), source);
+        alt.setToConstant(fConstant);
+        return alt <= source;
+      }
+      else
+        return DomainBitValue(fConstant <= source.fConstant);
+    }
+  DomainBitValue operator>=(const DomainBitValue& source) const
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        return DomainBitValue((*functionTable().bit_binary_compare_domain)
+            (value(), DBCOCompareGreaterOrEqual, source.value(), env()), *this);
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), *this);
+        alt.setToConstant(source.fConstant);
+        return *this >= alt;
+      }
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), source);
+        alt.setToConstant(fConstant);
+        return alt >= source;
+      }
+      else
+        return DomainBitValue(fConstant >= source.fConstant);
+    }
+  DomainBitValue operator<(const DomainBitValue& source) const
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        return DomainBitValue((*functionTable().bit_binary_compare_domain)
+            (value(), DBCOCompareLess, source.value(), env()), *this);
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), *this);
+        alt.setToConstant(source.fConstant);
+        return *this < alt;
+      }
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), source);
+        alt.setToConstant(fConstant);
+        return alt < source;
+      }
+      else
+        return DomainBitValue(fConstant < source.fConstant);
+    }
+  DomainBitValue operator>(const DomainBitValue& source) const
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        return DomainBitValue((*functionTable().bit_binary_compare_domain)
+            (value(), DBCOCompareGreater, source.value(), env()), *this);
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), *this);
+        alt.setToConstant(source.fConstant);
+        return *this > alt;
+      }
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        DomainBitValue alt(Empty(), source);
+        alt.setToConstant(fConstant);
+        return alt > source;
+      }
+      else
+        return DomainBitValue(fConstant > source.fConstant);
+    }
+
+  bool isConstant(bool* value) const
+    {
+      if (inherited::isValid())
+        return (*functionTable().bit_is_constant_value)(this->value(), value);
+      else
+      {
+        if (value)
+          *value = fConstant;
+        return true;
+      }
+    }
 };
 
 template <typename VALUE_TYPE>

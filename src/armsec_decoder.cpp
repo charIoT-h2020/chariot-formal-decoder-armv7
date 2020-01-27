@@ -3,6 +3,7 @@
 #include "unisim/component/cxx/processor/arm/psr.hh"
 #include "unisim/util/identifier/identifier.hh"
 #include "unisim/util/likely/likely.hh"
+#include <functional>
 #include "top_thumb.tcc"
 
 #include <cassert>
@@ -157,7 +158,7 @@ public:
     } 
 };
 
-extern DomainValue getRootDomainValue();
+// extern DomainValue getRootDomainValue();
 
 //class DomainMultiBitValue;
 class DomainBitValue : public DomainValue
@@ -166,10 +167,12 @@ private:
   typedef DomainValue inherited;
   bool fConstant;
 
-public:
-  DomainBitValue() : fConstant(false) {}
+protected:
   DomainBitValue(Empty empty, const DomainValue& ref)
     : DomainValue(empty, ref), fConstant(false) {}
+
+public:
+  DomainBitValue() : fConstant(false) {}
   DomainBitValue(DomainBitElement&& value, struct _DomainElementFunctions* functions, DomainEvaluationEnvironment* env)
     : DomainValue(std::move(value), functions, env), fConstant(false) {}
   DomainBitValue(Processor& processor);
@@ -188,7 +191,7 @@ public:
 
   DomainBitValue& setToConstant(bool value)
     {
-      if (inherited::isValid())
+      if (inherited::hasFunctionTable())
         svalue() = (*functionTable().bit_create_constant)(value);
       else
         fConstant = value;
@@ -198,312 +201,145 @@ public:
   DomainBitValue& setToUndefined(bool isSymbolic)
     { svalue() = (*functionTable().bit_create_top)(isSymbolic); return *this; }
 
-  DomainBitValue operator~() const
-    { 
+  DomainBitValue applyUnary(DomainBitUnaryOperation operation,
+      std::function<bool(bool)> constantFunction) const
+    {
       if (inherited::isValid())
         return DomainBitValue((*functionTable().bit_create_unary_apply)
-            (value(), DBUONegate, env()), *this);
+            (value(), operation, env()), *this);
       else
-        return DomainBitValue(~fConstant);
+        return DomainBitValue(constantFunction(fConstant));
     }
-  DomainBitValue operator!() const
-    { 
-      if (inherited::isValid())
-        return DomainBitValue((*functionTable().bit_create_unary_apply)
-            (value(), DBUONegate, env()), *this);
-      else
-        return DomainBitValue(!fConstant);
-    }
-  DomainBitValue operator|(const DomainBitValue& source) const
-    { 
+  DomainBitValue applyBinary(DomainBitBinaryOperation operation,
+      const DomainBitValue& source,
+      std::function<bool(bool, bool)> constantFunction) const
+    {
       if (inherited::isValid() && source.inherited::isValid())
         return DomainBitValue((*functionTable().bit_create_binary_apply)
-            (value(), DBBOOr, source.value(), env()), *this);
+            (value(), operation, source.value(), env()), *this);
       else if (inherited::isValid()) // !source.inherited::isValid()
       {
         DomainBitValue alt(Empty(), *this);
         alt.setToConstant(source.fConstant);
-        return *this | alt;
+        return applyBinary(operation, alt, constantFunction);
       }
       else if (source.inherited::isValid()) // !inherited::isValid()
       {
         DomainBitValue alt(Empty(), source);
         alt.setToConstant(fConstant);
-        alt |= source;
+        alt.applyBinaryAssign(operation, source, constantFunction);
         return std::move(alt);
       }
       else
-        return DomainBitValue(fConstant | source.fConstant);
+        return DomainBitValue(constantFunction(fConstant, source.fConstant));
     }
-  DomainBitValue operator&(const DomainBitValue& source) const
+  DomainBitValue applyCompare(DomainBitCompareOperation operation,
+      const DomainBitValue& source,
+      std::function<bool(bool, bool)> constantFunction) const
     {
       if (inherited::isValid() && source.inherited::isValid())
-        return DomainBitValue((*functionTable().bit_create_binary_apply)
-            (value(), DBBOAnd, source.value(), env()), *this);
+        return DomainBitValue((*functionTable().bit_binary_compare_domain)
+            (value(), operation, source.value(), env()), *this);
       else if (inherited::isValid()) // !source.inherited::isValid()
       {
         DomainBitValue alt(Empty(), *this);
         alt.setToConstant(source.fConstant);
-        return *this & alt;
+        return applyCompare(operation, alt, constantFunction);
       }
       else if (source.inherited::isValid()) // !inherited::isValid()
       {
         DomainBitValue alt(Empty(), source);
         alt.setToConstant(fConstant);
-        alt &= source;
-        return std::move(alt);
+        return alt.applyCompare(operation, source, constantFunction);
       }
       else
-        return DomainBitValue(fConstant & source.fConstant);
+        return DomainBitValue(constantFunction(fConstant, source.fConstant));
     }
-  DomainBitValue operator^(const DomainBitValue& source) const
+  DomainBitValue& applyBinaryAssign(DomainBitBinaryOperation operation,
+      const DomainBitValue& source,
+      std::function<bool(bool, bool)> constantFunction)
     {
       if (inherited::isValid() && source.inherited::isValid())
-        return DomainBitValue((*functionTable().bit_create_binary_apply)
-            (value(), DBBOExclusiveOr, source.value(), env()), *this);
+        (*functionTable().bit_binary_apply_assign)
+            (&svalue(), operation, source.value(), env());
       else if (inherited::isValid()) // !source.inherited::isValid()
       {
         DomainBitValue alt(Empty(), *this);
         alt.setToConstant(source.fConstant);
-        return *this ^ alt;
+        applyBinaryAssign(operation, alt, constantFunction);
       }
       else if (source.inherited::isValid()) // !inherited::isValid()
       {
-        DomainBitValue alt(Empty(), source);
-        alt.setToConstant(fConstant);
-        alt ^= source;
-        return std::move(alt);
+        bool thisConstant = fConstant;
+        operator=(DomainBitValue(Empty(), source));
+        setToConstant(thisConstant);
+        applyBinaryAssign(operation, source, constantFunction);
       }
       else
-        return DomainBitValue(fConstant ^ source.fConstant);
-    }
-  DomainBitValue operator||(const DomainBitValue& source) const
-    {
-      if (inherited::isValid() && source.inherited::isValid())
-        return DomainBitValue((*functionTable().bit_create_binary_apply)
-            (value(), DBBOOr, source.value(), env()), *this);
-      else if (inherited::isValid()) // !source.inherited::isValid()
-      {
-        DomainBitValue alt(Empty(), *this);
-        alt.setToConstant(source.fConstant);
-        return *this || alt;
-      }
-      else if (source.inherited::isValid()) // !inherited::isValid()
-      {
-        DomainBitValue alt(Empty(), source);
-        alt.setToConstant(fConstant);
-        return alt || *this;
-      }
-      else
-        return DomainBitValue(fConstant || source.fConstant);
-    }
-  DomainBitValue operator&&(const DomainBitValue& source) const
-    {
-      if (inherited::isValid() && source.inherited::isValid())
-        return DomainBitValue((*functionTable().bit_create_binary_apply)
-            (value(), DBBOAnd, source.value(), env()), *this);
-      else if (inherited::isValid()) // !source.inherited::isValid()
-      {
-        DomainBitValue alt(Empty(), *this);
-        alt.setToConstant(source.fConstant);
-        return *this && alt;
-      }
-      else if (source.inherited::isValid()) // !inherited::isValid()
-      {
-        DomainBitValue alt(Empty(), source);
-        alt.setToConstant(fConstant);
-        return alt && *this;
-      }
-      else
-        return DomainBitValue(fConstant && source.fConstant);
+        fConstant = constantFunction(fConstant, source.fConstant);
+      return *this;
     }
 
-  DomainBitValue& operator|=(const DomainBitValue& source)
-    { 
-      if (inherited::isValid() && source.inherited::isValid())
-        (*functionTable().bit_binary_apply_assign)
-            (&svalue(), DBBOOr, source.value(), env());
-      else if (inherited::isValid()) // !source.inherited::isValid()
-      {
-        DomainBitValue alt(Empty(), *this);
-        alt.setToConstant(source.fConstant);
-        return *this |= alt;
-      }
-      else if (source.inherited::isValid()) // !inherited::isValid()
-      {
-        bool thisConstant = fConstant;
-        operator=(DomainBitValue(Empty(), source));
-        setToConstant(thisConstant);
-        return *this |= source;
-      }
-      else
-        fConstant |= source.fConstant;
-      return *this;
+  DomainBitValue operator~() const
+    { return applyUnary(DBUONegate, [](bool val) { return ~val; }); }
+  DomainBitValue operator!() const
+    { return applyUnary(DBUONegate, [](bool val) { return !val; }); }
+  DomainBitValue operator|(const DomainBitValue& source) const
+    { return applyBinary(DBBOOr, source,
+          [](bool fst, bool snd) { return fst | snd; });
     }
-  DomainBitValue operator&=(const DomainBitValue& source)
-    {
-      if (inherited::isValid() && source.inherited::isValid())
-        (*functionTable().bit_binary_apply_assign)
-            (&svalue(), DBBOAnd, source.value(), env());
-      else if (inherited::isValid()) // !source.inherited::isValid()
-      {
-        DomainBitValue alt(Empty(), *this);
-        alt.setToConstant(source.fConstant);
-        return *this &= alt;
-      }
-      else if (source.inherited::isValid()) // !inherited::isValid()
-      {
-        bool thisConstant = fConstant;
-        operator=(DomainBitValue(Empty(), source));
-        setToConstant(thisConstant);
-        return *this &= source;
-      }
-      else
-        fConstant &= source.fConstant;
-      return *this;
+  DomainBitValue operator&(const DomainBitValue& source) const
+    { return applyBinary(DBBOAnd, source,
+          [](bool fst, bool snd) { return fst & snd; });
+    }
+  DomainBitValue operator^(const DomainBitValue& source) const
+    { return applyBinary(DBBOExclusiveOr, source,
+          [](bool fst, bool snd) { return fst ^ snd; });
+    }
+  DomainBitValue operator||(const DomainBitValue& source) const
+    { return applyBinary(DBBOOr, source,
+          [](bool fst, bool snd) { return fst || snd; });
+    }
+  DomainBitValue operator&&(const DomainBitValue& source) const
+    { return applyBinary(DBBOOr, source,
+          [](bool fst, bool snd) { return fst && snd; });
+    }
+  DomainBitValue& operator|=(const DomainBitValue& source)
+    { return applyBinaryAssign(DBBOOr, source,
+          [](bool fst, bool snd) { return fst | snd; });
+    }
+  DomainBitValue& operator&=(const DomainBitValue& source)
+    { return applyBinaryAssign(DBBOAnd, source,
+          [](bool fst, bool snd) { return fst & snd; });
     }
   DomainBitValue operator^=(const DomainBitValue& source)
-    {
-      if (inherited::isValid() && source.inherited::isValid())
-        (*functionTable().bit_binary_apply_assign)
-            (&svalue(), DBBOExclusiveOr, source.value(), env());
-      else if (inherited::isValid()) // !source.inherited::isValid()
-      {
-        DomainBitValue alt(Empty(), *this);
-        alt.setToConstant(source.fConstant);
-        return *this ^= alt;
-      }
-      else if (source.inherited::isValid()) // !inherited::isValid()
-      {
-        bool thisConstant = fConstant;
-        operator=(DomainBitValue(Empty(), source));
-        setToConstant(thisConstant);
-        return *this ^= source;
-      }
-      else
-        fConstant ^= source.fConstant;
-      return *this;
+    { return applyBinaryAssign(DBBOExclusiveOr, source,
+          [](bool fst, bool snd) { return fst ^ snd; });
     }
 
   DomainBitValue operator==(const DomainBitValue& source) const
-    {
-      if (inherited::isValid() && source.inherited::isValid())
-        return DomainBitValue((*functionTable().bit_binary_compare_domain)
-            (value(), DBCOCompareEqual, source.value(), env()), *this);
-      else if (inherited::isValid()) // !source.inherited::isValid()
-      {
-        DomainBitValue alt(Empty(), *this);
-        alt.setToConstant(source.fConstant);
-        return *this == alt;
-      }
-      else if (source.inherited::isValid()) // !inherited::isValid()
-      {
-        DomainBitValue alt(Empty(), source);
-        alt.setToConstant(fConstant);
-        return alt == source;
-      }
-      else
-        return DomainBitValue(fConstant == source.fConstant);
+    { return applyCompare(DBCOCompareEqual, source,
+          [](bool fst, bool snd) { return fst == snd; });
     }
   DomainBitValue operator!=(const DomainBitValue& source) const
-    {
-      if (inherited::isValid() && source.inherited::isValid())
-        return DomainBitValue((*functionTable().bit_binary_compare_domain)
-            (value(), DBCOCompareDifferent, source.value(), env()), *this);
-      else if (inherited::isValid()) // !source.inherited::isValid()
-      {
-        DomainBitValue alt(Empty(), *this);
-        alt.setToConstant(source.fConstant);
-        return *this != alt;
-      }
-      else if (source.inherited::isValid()) // !inherited::isValid()
-      {
-        DomainBitValue alt(Empty(), source);
-        alt.setToConstant(fConstant);
-        return alt != source;
-      }
-      else
-        return DomainBitValue(fConstant != source.fConstant);
+    { return applyCompare(DBCOCompareDifferent, source,
+          [](bool fst, bool snd) { return fst != snd; });
     }
   DomainBitValue operator<=(const DomainBitValue& source) const
-    {
-      if (inherited::isValid() && source.inherited::isValid())
-        return DomainBitValue((*functionTable().bit_binary_compare_domain)
-            (value(), DBCOCompareLessOrEqual, source.value(), env()), *this);
-      else if (inherited::isValid()) // !source.inherited::isValid()
-      {
-        DomainBitValue alt(Empty(), *this);
-        alt.setToConstant(source.fConstant);
-        return *this <= alt;
-      }
-      else if (source.inherited::isValid()) // !inherited::isValid()
-      {
-        DomainBitValue alt(Empty(), source);
-        alt.setToConstant(fConstant);
-        return alt <= source;
-      }
-      else
-        return DomainBitValue(fConstant <= source.fConstant);
+    { return applyCompare(DBCOCompareLessOrEqual, source,
+          [](bool fst, bool snd) { return fst <= snd; });
     }
   DomainBitValue operator>=(const DomainBitValue& source) const
-    {
-      if (inherited::isValid() && source.inherited::isValid())
-        return DomainBitValue((*functionTable().bit_binary_compare_domain)
-            (value(), DBCOCompareGreaterOrEqual, source.value(), env()), *this);
-      else if (inherited::isValid()) // !source.inherited::isValid()
-      {
-        DomainBitValue alt(Empty(), *this);
-        alt.setToConstant(source.fConstant);
-        return *this >= alt;
-      }
-      else if (source.inherited::isValid()) // !inherited::isValid()
-      {
-        DomainBitValue alt(Empty(), source);
-        alt.setToConstant(fConstant);
-        return alt >= source;
-      }
-      else
-        return DomainBitValue(fConstant >= source.fConstant);
+    { return applyCompare(DBCOCompareGreaterOrEqual, source,
+          [](bool fst, bool snd) { return fst >= snd; });
     }
   DomainBitValue operator<(const DomainBitValue& source) const
-    {
-      if (inherited::isValid() && source.inherited::isValid())
-        return DomainBitValue((*functionTable().bit_binary_compare_domain)
-            (value(), DBCOCompareLess, source.value(), env()), *this);
-      else if (inherited::isValid()) // !source.inherited::isValid()
-      {
-        DomainBitValue alt(Empty(), *this);
-        alt.setToConstant(source.fConstant);
-        return *this < alt;
-      }
-      else if (source.inherited::isValid()) // !inherited::isValid()
-      {
-        DomainBitValue alt(Empty(), source);
-        alt.setToConstant(fConstant);
-        return alt < source;
-      }
-      else
-        return DomainBitValue(fConstant < source.fConstant);
+    { return applyCompare(DBCOCompareLess, source,
+          [](bool fst, bool snd) { return fst < snd; });
     }
   DomainBitValue operator>(const DomainBitValue& source) const
-    {
-      if (inherited::isValid() && source.inherited::isValid())
-        return DomainBitValue((*functionTable().bit_binary_compare_domain)
-            (value(), DBCOCompareGreater, source.value(), env()), *this);
-      else if (inherited::isValid()) // !source.inherited::isValid()
-      {
-        DomainBitValue alt(Empty(), *this);
-        alt.setToConstant(source.fConstant);
-        return *this > alt;
-      }
-      else if (source.inherited::isValid()) // !inherited::isValid()
-      {
-        DomainBitValue alt(Empty(), source);
-        alt.setToConstant(fConstant);
-        return alt > source;
-      }
-      else
-        return DomainBitValue(fConstant > source.fConstant);
+    { return applyCompare(DBCOCompareGreater, source,
+          [](bool fst, bool snd) { return fst > snd; });
     }
 
   bool isConstant(bool* value) const
@@ -525,274 +361,534 @@ class DomainMultiFloatValue;
 template <typename VALUE_TYPE>
 class DomainMultiBitValue : public DomainValue
 {
-  public:
-   typedef VALUE_TYPE value_type;
-   typedef DomainMultiBitValue<VALUE_TYPE> this_type;
+private:
+  typedef DomainMultiBitValue<VALUE_TYPE> this_type;
+  typedef DomainValue inherited;
+  VALUE_TYPE uConstant;
+  template <typename SRC_VALUE_TYPE>
+  friend class DomainMultiBitValue;
+
+public:
+  typedef VALUE_TYPE value_type;
   
-   DomainMultiBitValue() : DomainValue(getRootDomainValue()) {}
+  DomainMultiBitValue() : uConstant(0) {}
 
-   explicit DomainMultiBitValue( value_type value )
-     : DomainValue(getRootDomainValue())
-   {
-     svalue() = (*functionTable().multibit_create_constant)(DomainIntegerConstant{8*sizeof(VALUE_TYPE), std::numeric_limits<VALUE_TYPE>::is_signed, uint64_t(value)});
-   }
-   DomainMultiBitValue( DomainMultiBitValue&& other ) = default;
-   DomainMultiBitValue( const DomainMultiBitValue& other ) = default;
-   DomainMultiBitValue& operator=( DomainMultiBitValue&& other ) = default;
-   DomainMultiBitValue& operator=( const DomainMultiBitValue& other ) = default;
-   explicit DomainMultiBitValue( const DomainBitValue& other )
-     : DomainValue(getRootDomainValue())
-   {
-     svalue() = (*functionTable().bit_create_cast_multibit)(other.value(),8*sizeof(VALUE_TYPE),env());
-   }
+  explicit DomainMultiBitValue( value_type value ) : uConstant(value) {}
+  DomainMultiBitValue( DomainMultiBitValue&& other ) = default;
+  DomainMultiBitValue( Empty empty, const DomainValue& other )
+    : inherited(empty, other), uConstant(0) {}
+  DomainMultiBitValue( const DomainMultiBitValue& other ) = default;
+  DomainMultiBitValue& operator=( DomainMultiBitValue&& other ) = default;
+  DomainMultiBitValue& operator=( const DomainMultiBitValue& other ) = default;
+  explicit DomainMultiBitValue( const DomainBitValue& other )
+    : DomainValue(Empty(), other)
+    {
+      if (inherited::hasFunctionTable())
+        svalue() = (*functionTable().bit_create_cast_multibit)(other.value(),8*sizeof(VALUE_TYPE),env());
+      else {
+        bool res;
+        other.isConstant(&res);
+        uConstant = res;
+      }
+    }
+  DomainMultiBitValue(DomainElement&& element, Processor& proc)
+    : DomainValue(std::move(element), proc) {}
+  DomainMultiBitValue(DomainElement&& element, DomainValue const& value)
+    : DomainValue(std::move(element), value) {}
+  DomainMultiBitValue(DomainElement&& value, struct _DomainElementFunctions* functions, DomainEvaluationEnvironment* env)
+    : DomainValue(std::move(value), functions, env) {}
 
-   DomainMultiBitValue(DomainElement&& element, Processor& proc)
-     : DomainValue(std::move(element), proc)
-   {}
-
-   DomainMultiBitValue(DomainElement&& element, DomainValue const& value)
-     : DomainValue(std::move(element), value)
-   {}
-   DomainMultiBitValue(DomainElement&& value, struct _DomainElementFunctions* functions, DomainEvaluationEnvironment* env)
-     : DomainValue(std::move(value), functions, env) {}
-
-   template <typename SRC_VALUE_TYPE>
-   explicit DomainMultiBitValue( DomainMultiBitValue<SRC_VALUE_TYPE> const& other )
+  template <typename SRC_VALUE_TYPE>
+  explicit DomainMultiBitValue( DomainMultiBitValue<SRC_VALUE_TYPE> const& other )
     {
       if (CmpTypes<SRC_VALUE_TYPE,VALUE_TYPE>::same) {
-        this->DomainValue::operator= ( other );
+        inherited::operator= ( other );
       } else {
-        this->DomainValue::operator= ( getRootDomainValue() );
-        svalue() = (*functionTable().multibit_create_cast_multibit)(other.value(),8*sizeof(SRC_VALUE_TYPE),8*sizeof(VALUE_TYPE),std::numeric_limits<SRC_VALUE_TYPE>::is_signed);
+        inherited::operator= ( this_type(Empty(), other) );
+        if (inherited::hasFunctionTable())
+          svalue() = (*functionTable().multibit_create_cast_multibit)(other.value(),8*sizeof(SRC_VALUE_TYPE),8*sizeof(VALUE_TYPE),std::numeric_limits<SRC_VALUE_TYPE>::is_signed);
+        else
+          uConstant = other.uConstant;
       }
     }
 
-  private:
-   bool isSigned() const { return std::numeric_limits<VALUE_TYPE>::is_signed; }
+private:
+  bool isSigned() const { return std::numeric_limits<VALUE_TYPE>::is_signed; }
 
-  public:
-   DomainElement& svalue() { return DomainValue::svalue(); }
-   const DomainElement& value() const { return DomainValue::value(); }
+public:
+  DomainElement& svalue() { return DomainValue::svalue(); }
+  const DomainElement& value() const { return DomainValue::value(); }
 
-  public:
-   // DomainMultiBitValue() : DomainValue(fSigned(false) {}
-   // DomainMultiBitValue(Empty empty, const DomainValue& ref)
-   //    :  DomainValue(empty, ref), fSigned(false) {}
-   // DomainMultiBitValue(DomainMultiBitElement&& value, struct _DomainElementFunctions* functions, DomainEvaluationEnvironment* env)
-   //    :  DomainValue(std::move(value), functions, env), fSigned(false) {}
-   // DomainMultiBitValue(Processor& processor);
-   // DomainMultiBitValue(DomainMultiBitElement&& value, Processor& processor, bool isSigned);
-   // DomainMultiBitValue(DomainMultiBitElement&& value, const DomainValue& source, bool isSigned)
-   //    :  DomainValue(std::move(value), source), fSigned(isSigned) {}
-   // explicit DomainMultiBitValue(DomainIntegerConstant value, Processor& processor, bool isSigned)
-   //    :  DomainValue(processor), fSigned(isSigned)
-   //    {  svalue() = (*functionTable().multibit_create_constant)(value); }
-   // DomainMultiBitValue(DomainMultiBitValue&& source) = default;
-   // DomainMultiBitValue(const DomainMultiBitValue& source) = default;
-   // DomainMultiBitValue& operator=(DomainMultiBitValue&& source) = default;
-   // DomainMultiBitValue& operator=(const DomainMultiBitValue& source) = default;
+public:
+  DomainMultiBitValue& setToConstant(VALUE_TYPE value)
+    {
+      if (inherited::hasFunctionTable())
+        svalue() = (*functionTable().multibit_create_constant)(DomainIntegerConstant{8*sizeof(VALUE_TYPE), std::numeric_limits<VALUE_TYPE>::is_signed, uint64_t(value)});
+      else
+        uConstant = value;
+      return *this;
+    }
+  DomainMultiBitValue& setToUndefined(int sizeInBits, bool isSymbolic)
+    {
+      svalue() = (*functionTable().multibit_create_top)(sizeInBits, isSymbolic);
+      return *this;
+    }
+  operator DomainBitValue() const
+    {
+      if (inherited::isValid())
+        return DomainBitValue((*functionTable().multibit_create_cast_bit)
+            (value(), env()), *this);
+      else
+        return DomainBitValue((bool) uConstant);
+    }
+  DomainBitValue castShiftBit(int shift)
+    {
+      if (inherited::isValid())
+        return DomainBitValue((*functionTable().multibit_create_cast_shift_bit)
+            (value(), shift, env()), *this);
+      else
+        return DomainBitValue((bool) (uConstant & ((VALUE_TYPE) 1 << shift)));
+    }
+  template <class ResultType, int size>
+  DomainMultiFloatValue<ResultType> castToMultiFloat() const
+    {
+      if (inherited::isValid())
+        return DomainMultiFloatValue<ResultType>((*functionTable().multibit_create_cast_multifloat)(value(), size, 
+            std::numeric_limits<VALUE_TYPE>::is_signed, env()), *this);
+      else
+        return DomainMultiFloatValue<ResultType>((ResultType) uConstant);
+    }
 
-   // DomainMultiBitValue& setToConstant(DomainIntegerConstant value)
-   //    {  svalue() = (*functionTable().multibit_create_constant)(value);
-   //       return *this;
-   //    }
-   // DomainMultiBitValue& setToUndefined(int sizeInBits, bool isSymbolic, bool isSigned)
-   //    {  svalue() = (*functionTable().multibit_create_top)(sizeInBits, isSymbolic);
-   //       assert( isSigned == std::numeric_limits<SRC_VALUE_TYPE>::is_signed);
-   //       return *this;
-   //    }
-   operator DomainBitValue() const
-      {  return DomainBitValue((*functionTable().multibit_create_cast_bit)
-               (value(), env()), *this);
-      }
-   // DomainBitValue castShiftBit(int shift)
-   //    {  return DomainBitValue((*functionTable().multibit_create_cast_shift_bit)
-   //             (value(), shift, env()), *this);
-   //    }
-   template <class ResultType, int size>
-   DomainMultiFloatValue<ResultType> castToMultiFloat() const
-      {  return DomainMultiFloatValue<ResultType>((*functionTable().multibit_create_cast_multifloat)(value(), size, 
-               std::numeric_limits<VALUE_TYPE>::is_signed, env()), *this); }
-
-   void reduce(int first, int last)
-      {  (*functionTable().multibit_reduce_apply_assign)(&svalue(),
+  void reduce(int first, int last)
+    {
+      if (inherited::isValid())
+        (*functionTable().multibit_reduce_apply_assign)(&svalue(),
             DomainMultiBitReduceOperation{first, last}, env());
-      }
-   void extendWithZero(int new_size)
-      {  (*functionTable().multibit_extend_apply_assign)(&svalue(),
+      else
+        uConstant = (uConstant >> first) & ~(~((VALUE_TYPE) 0) << (last-first+1));
+    }
+  void extendWithZero(int new_size)
+    {
+      if (inherited::isValid())
+        (*functionTable().multibit_extend_apply_assign)(&svalue(),
             DomainMultiBitExtendOperation{DMBEOExtendWithZero, new_size}, env());
-      }
-   void bitset(int first, int last, const DomainValue& source)
-      {  (*functionTable().multibit_bitset_apply_assign)(&svalue(),
+    }
+  template <typename IntType>
+  void bitset(int first, int last, const DomainMultiBitValue<IntType>& source)
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        (*functionTable().multibit_bitset_apply_assign)(&svalue(),
             DomainMultiBitSetOperation{first, last}, source.value(), env());
+      else if (inherited::isValid())
+        { // !source.inherited::isValid()
+          DomainMultiBitValue<IntType> alt(Empty(), *this);
+          alt.setToConstant(source.uConstant);
+          bitset(first, last, alt);
+        }
+      else if (source.inherited::isValid())
+        {
+          VALUE_TYPE constant = uConstant;
+          this->operator=(DomainMultiBitValue<VALUE_TYPE>(Empty(), source));
+          setToConstant(constant);
+          bitset(first, last, source);
+        }
+      else
+        {
+          VALUE_TYPE mask = (~((VALUE_TYPE) 0) << first);
+          if ((size_t) (last+1) < sizeof(VALUE_TYPE)*8)
+            mask &= ~(~((VALUE_TYPE) 0) << (last+1));
+          uConstant &= ~mask;
+          uConstant |= ((VALUE_TYPE) source.uConstant) << first;
+        }
+    }
+  this_type applyUnary(DomainMultiBitUnaryOperation operation,
+      std::function<VALUE_TYPE(VALUE_TYPE)> constantFunction) const
+    {
+      if (inherited::isValid())
+        return DomainMultiBitValue((*functionTable().multibit_create_unary_apply)
+            (value(), operation, env()), *this);
+      else
+        return DomainMultiBitValue(constantFunction(uConstant));
+    }
+  this_type applyUnary(DomainMultiBitUnaryOperation signedOperation,
+      DomainMultiBitUnaryOperation unsignedOperation,
+      std::function<VALUE_TYPE(VALUE_TYPE)> constantFunction) const
+    {
+      if (inherited::isValid())
+        return DomainMultiBitValue((*functionTable().multibit_create_unary_apply)
+            (value(), isSigned() ? signedOperation : unsignedOperation, env()), *this);
+      else
+        return DomainMultiBitValue(constantFunction(uConstant));
+    }
+  this_type& applyUnaryAssign(DomainMultiBitUnaryOperation signedOperation,
+      DomainMultiBitUnaryOperation unsignedOperation,
+      std::function<void(VALUE_TYPE&)> constantFunction)
+    {
+      if (inherited::isValid())
+        (*functionTable().multibit_unary_apply_assign)
+            (&svalue(), isSigned() ? signedOperation : unsignedOperation, env());
+      else
+        constantFunction(uConstant);
+      return *this;
+    }
+    
+  template <typename IntType>
+  this_type applyBinary(DomainMultiBitBinaryOperation signedOperation,
+      DomainMultiBitBinaryOperation unsignedOperation,
+      const DomainMultiBitValue<IntType>& source,
+      std::function<VALUE_TYPE(VALUE_TYPE, IntType)> constantFunction) const
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        return this_type((*functionTable().multibit_create_binary_apply)
+            (value(), isSigned() ? signedOperation : unsignedOperation, source.value(), env()), *this);
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        DomainMultiBitValue<IntType> alt(Empty(), *this);
+        alt.setToConstant(source.uConstant);
+        return applyBinary(signedOperation, unsignedOperation, alt, constantFunction);
       }
-   DomainMultiBitValue operator~() const
-      {  return DomainMultiBitValue((*functionTable().multibit_create_unary_apply)
-               (value(), DMBUOBitNegate, env()), *this);
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        this_type alt(Empty(), source);
+        alt.setToConstant(uConstant);
+        alt.applyBinaryAssign(signedOperation, unsignedOperation, source, constantFunction);
+        return std::move(alt);
       }
-   DomainMultiBitValue operator-() const
-      {  return DomainMultiBitValue((*functionTable().multibit_create_unary_apply)
-               (value(), DMBUOOppositeSigned, env()), *this);
+      else
+        return this_type(constantFunction(uConstant, source.uConstant));
+    }
+  template <typename IntType>
+  this_type applyBinary(DomainMultiBitBinaryOperation operation,
+      const DomainMultiBitValue<IntType>& source,
+      std::function<VALUE_TYPE(VALUE_TYPE, IntType)> constantFunction) const
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        return this_type((*functionTable().multibit_create_binary_apply)
+            (value(), operation, source.value(), env()), *this);
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        DomainMultiBitValue<IntType> alt(Empty(), *this);
+        alt.setToConstant(source.uConstant);
+        return applyBinary(operation, alt, constantFunction);
       }
-   DomainMultiBitValue& operator++()
-      {  (*functionTable().multibit_unary_apply_assign)
-               (&svalue(), isSigned() ? DMBUONextSigned : DMBUONextUnsigned, env());
-         return *this;
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        this_type alt(Empty(), source);
+        alt.setToConstant(uConstant);
+        alt.applyBinaryAssign(operation, source, constantFunction);
+        return std::move(alt);
       }
-   DomainMultiBitValue& operator--()
-      {  (*functionTable().multibit_unary_apply_assign)
-               (&svalue(), isSigned() ? DMBUOPrevSigned : DMBUOPrevUnsigned, env());
-         return *this;
+      else
+        return this_type(constantFunction(uConstant, source.uConstant));
+    }
+  DomainBitValue applyCompare(DomainMultiBitCompareOperation signedOperation,
+      DomainMultiBitCompareOperation unsignedOperation,
+      const this_type& source,
+      std::function<bool(VALUE_TYPE, VALUE_TYPE)> constantFunction) const
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        return DomainBitValue((*functionTable().multibit_binary_compare_domain)
+            (value(), isSigned() ? signedOperation : unsignedOperation, source.value(), env()), *this);
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        this_type alt(Empty(), *this);
+        alt.setToConstant(source.uConstant);
+        return applyCompare(signedOperation, unsignedOperation, alt, constantFunction);
       }
-   DomainMultiBitValue operator+(const DomainMultiBitValue& source) const
-      {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
-               (value(), isSigned() ? DMBBOPlusSigned : DMBBOPlusUnsigned, source.value(), env()), *this);
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        this_type alt(Empty(), source);
+        alt.setToConstant(uConstant);
+        return alt.applyCompare(signedOperation, unsignedOperation, source, constantFunction);
       }
-   DomainMultiBitValue operator-(const DomainMultiBitValue& source) const
-      {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
-               (value(), isSigned() ? DMBBOMinusSigned : DMBBOMinusUnsigned, source.value(), env()), *this);
+      else
+        return DomainBitValue(constantFunction(uConstant, source.uConstant));
+    }
+  DomainBitValue applyCompare(DomainMultiBitCompareOperation operation,
+      const this_type& source,
+      std::function<bool(VALUE_TYPE, VALUE_TYPE)> constantFunction) const
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        return DomainBitValue((*functionTable().multibit_binary_compare_domain)
+            (value(), operation, source.value(), env()), *this);
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        this_type alt(Empty(), *this);
+        alt.setToConstant(source.uConstant);
+        return applyCompare(operation, alt, constantFunction);
       }
-   DomainMultiBitValue operator*(const DomainMultiBitValue& source) const
-      {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
-               (value(), isSigned() ? DMBBOTimesSigned : DMBBOTimesUnsigned, source.value(), env()), *this);
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        this_type alt(Empty(), source);
+        alt.setToConstant(uConstant);
+        return alt.applyCompare(operation, source, constantFunction);
       }
-   DomainMultiBitValue operator/(const DomainMultiBitValue& source) const
-      {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
-               (value(), isSigned() ? DMBBODivideSigned : DMBBODivideUnsigned, source.value(), env()), *this);
+      else
+        return DomainBitValue(constantFunction(uConstant, source.uConstant));
+    }
+  template <typename IntType>
+  this_type& applyBinaryAssign(DomainMultiBitBinaryOperation signedOperation,
+      DomainMultiBitBinaryOperation unsignedOperation,
+      const DomainMultiBitValue<IntType>& source,
+      std::function<VALUE_TYPE(VALUE_TYPE, IntType)> constantFunction)
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        (*functionTable().multibit_binary_apply_assign)
+            (&svalue(), isSigned() ? signedOperation : unsignedOperation, source.value(), env());
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        DomainMultiBitValue<IntType> alt(Empty(), *this);
+        alt.setToConstant(source.uConstant);
+        applyBinaryAssign(signedOperation, unsignedOperation, alt, constantFunction);
       }
-   DomainMultiBitValue operator%(const DomainMultiBitValue& source) const
-      {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
-               (value(), isSigned() ? DMBBOModuloSigned : DMBBOModuloUnsigned, source.value(), env()), *this);
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        VALUE_TYPE thisConstant = uConstant;
+        operator=(this_type(Empty(), source));
+        setToConstant(thisConstant);
+        applyBinaryAssign(signedOperation, unsignedOperation, source, constantFunction);
       }
-   DomainMultiBitValue operator|(const DomainMultiBitValue& source) const
-      {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
-               (value(), DMBBOBitOr, source.value(), env()), *this);
+      else
+        uConstant = constantFunction(uConstant, source.uConstant);
+      return *this;
+    }
+  template <typename IntType>
+  this_type& applyBinaryAssign(DomainMultiBitBinaryOperation operation,
+      const DomainMultiBitValue<IntType>& source,
+      std::function<VALUE_TYPE(VALUE_TYPE, IntType)> constantFunction)
+    {
+      if (inherited::isValid() && source.inherited::isValid())
+        (*functionTable().multibit_binary_apply_assign)
+            (&svalue(), operation, source.value(), env());
+      else if (inherited::isValid()) // !source.inherited::isValid()
+      {
+        DomainMultiBitValue<IntType> alt(Empty(), *this);
+        alt.setToConstant(source.uConstant);
+        applyBinaryAssign(operation, alt, constantFunction);
       }
-   DomainMultiBitValue operator&(const DomainMultiBitValue& source) const
-      {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
-               (value(), DMBBOBitAnd, source.value(), env()), *this);
+      else if (source.inherited::isValid()) // !inherited::isValid()
+      {
+        VALUE_TYPE thisConstant = uConstant;
+        operator=(this_type(Empty(), source));
+        setToConstant(thisConstant);
+        applyBinaryAssign(operation, source, constantFunction);
       }
-   DomainMultiBitValue operator^(const DomainMultiBitValue& source) const
-      {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
-               (value(), DMBBOBitExclusiveOr, source.value(), env()), *this);
-      }
+      else
+        uConstant = constantFunction(uConstant, source.uConstant);
+      return *this;
+    }
 
-   DomainMultiBitValue& operator+=(const DomainMultiBitValue& source)
-      {  (*functionTable().multibit_binary_apply_assign)
-               (&svalue(), isSigned() ? DMBBOPlusSigned : DMBBOPlusUnsigned, source.value(), env());
-         return *this;
-      }
-   DomainMultiBitValue& operator-=(const DomainMultiBitValue& source)
-      {  (*functionTable().multibit_binary_apply_assign)
-               (&svalue(), isSigned() ? DMBBOMinusSigned : DMBBOMinusUnsigned, source.value(), env());
-         return *this;
-      }
-   DomainMultiBitValue& operator*=(const DomainMultiBitValue& source)
-      {  (*functionTable().multibit_binary_apply_assign)
-               (&svalue(), isSigned() ? DMBBOTimesSigned : DMBBOTimesUnsigned, source.value(), env());
-         return *this;
-      }
-   DomainMultiBitValue& operator/=(const DomainMultiBitValue& source)
-      {  (*functionTable().multibit_binary_apply_assign)
-               (&svalue(), isSigned() ? DMBBODivideSigned : DMBBODivideUnsigned, source.value(), env());
-         return *this;
-      }
-   DomainMultiBitValue& operator%=(const DomainMultiBitValue& source)
-      {  (*functionTable().multibit_binary_apply_assign)
-               (&svalue(), isSigned() ? DMBBOModuloSigned : DMBBOModuloUnsigned, source.value(), env());
-         return *this;
-      }
-   DomainMultiBitValue& operator|=(const DomainMultiBitValue& source)
-      {  (*functionTable().multibit_binary_apply_assign)
-               (&svalue(), DMBBOBitOr, source.value(), env());
-         return *this;
-      }
-   DomainMultiBitValue operator&=(const DomainMultiBitValue& source)
-      {  (*functionTable().multibit_binary_apply_assign)
-               (&svalue(), DMBBOBitAnd, source.value(), env());
-         return *this;
-      }
-   DomainMultiBitValue operator^=(const DomainMultiBitValue& source)
-      {  (*functionTable().multibit_binary_apply_assign)
-               (&svalue(), DMBBOBitExclusiveOr, source.value(), env());
-         return *this;
-      }
-   template <typename SHT>
-   DomainMultiBitValue operator << (SHT sht) const
-      {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
-           (value(), DMBBOLeftShift, this_type(sht).value(), env()), *this);
-      }
-   template <typename SHT>
-   DomainMultiBitValue& operator <<= (SHT sht)
-      {  (*functionTable().multibit_binary_apply_assign)
-              (&svalue(), DMBBOLeftShift, this_type(sht).value(), env());
-         return *this;
-      }
+  DomainMultiBitValue operator~() const
+    { return applyUnary(DMBUOBitNegate, [](VALUE_TYPE val) { return ~val; }); }
+  DomainMultiBitValue operator-() const
+    { return applyUnary(DMBUOOppositeSigned, [](VALUE_TYPE val) { return -val; }); }
+  DomainMultiBitValue& operator++()
+    { return applyUnaryAssign(DMBUONextSigned, DMBUONextUnsigned,
+        [](VALUE_TYPE& val) { ++val; });
+    }
+  DomainMultiBitValue& operator--()
+    { return applyUnaryAssign(DMBUOPrevSigned, DMBUOPrevUnsigned,
+        [](VALUE_TYPE& val) { --val; });
+    }
+  DomainMultiBitValue operator+(const DomainMultiBitValue& source) const
+    { std::function<VALUE_TYPE(VALUE_TYPE, VALUE_TYPE)> fun
+        = [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst + snd; };
+      return applyBinary(DMBBOPlusSigned, DMBBOPlusUnsigned, source, fun);
+    }
+  DomainMultiBitValue operator-(const DomainMultiBitValue& source) const
+    { std::function<VALUE_TYPE(VALUE_TYPE, VALUE_TYPE)> fun
+        = [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst - snd; };
+      return applyBinary(DMBBOMinusSigned, DMBBOMinusUnsigned, source, fun);
+    }
+  DomainMultiBitValue operator*(const DomainMultiBitValue& source) const
+    { std::function<VALUE_TYPE(VALUE_TYPE, VALUE_TYPE)> fun
+        = [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst * snd; };
+      return applyBinary(DMBBOTimesSigned, DMBBOTimesUnsigned, source, fun);
+    }
+  DomainMultiBitValue operator/(const DomainMultiBitValue& source) const
+    { std::function<VALUE_TYPE(VALUE_TYPE, VALUE_TYPE)> fun
+        = [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst / snd; };
+      return applyBinary(DMBBODivideSigned, DMBBODivideUnsigned, source, fun);
+    }
+  DomainMultiBitValue operator%(const DomainMultiBitValue& source) const
+    { std::function<VALUE_TYPE(VALUE_TYPE, VALUE_TYPE)> fun
+        = [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst % snd; };
+      return applyBinary(DMBBOModuloSigned, DMBBOModuloUnsigned, source, fun);
+    }
+  DomainMultiBitValue operator|(const DomainMultiBitValue& source) const
+    { std::function<VALUE_TYPE(VALUE_TYPE, VALUE_TYPE)> fun
+        = [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst | snd; };
+      return applyBinary(DMBBOBitOr, source, fun);
+    }
+  DomainMultiBitValue operator&(const DomainMultiBitValue& source) const
+    { std::function<VALUE_TYPE(VALUE_TYPE, VALUE_TYPE)> fun
+        = [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst & snd; };
+      return applyBinary(DMBBOBitAnd, source, fun);
+    }
+  DomainMultiBitValue operator^(const DomainMultiBitValue& source) const
+    { std::function<VALUE_TYPE(VALUE_TYPE, VALUE_TYPE)> fun
+        = [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst ^ snd; };
+      return applyBinary(DMBBOBitExclusiveOr, source, fun);
+    }
 
-   template <typename SHT>
-   DomainMultiBitValue operator >> (SHT sht) const
-      {  return DomainMultiBitValue((*functionTable().multibit_create_binary_apply)
-           (value(), isSigned() ? DMBBOArithmeticRightShift : DMBBOLogicalRightShift,
-               this_type(sht).value(), env()), *this);
-      }
-   template <typename SHT>
-   DomainMultiBitValue& operator >>= (SHT sht)
-      {  (*functionTable().multibit_binary_apply_assign)
-              (&svalue(), isSigned() ? DMBBOArithmeticRightShift : DMBBOLogicalRightShift, this_type(sht).value(), env());
-         return *this;
-      }
+  DomainMultiBitValue& operator+=(const DomainMultiBitValue& source)
+    { std::function<VALUE_TYPE(VALUE_TYPE, VALUE_TYPE)> fun
+        = [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst + snd; };
+      return applyBinaryAssign(DMBBOPlusSigned, DMBBOPlusUnsigned, source, fun);
+    }
+  DomainMultiBitValue& operator-=(const DomainMultiBitValue& source)
+    { std::function<VALUE_TYPE(VALUE_TYPE, VALUE_TYPE)> fun
+        = [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst - snd; };
+      return applyBinaryAssign(DMBBOMinusSigned, DMBBOMinusUnsigned, source, fun);
+    }
+  DomainMultiBitValue& operator*=(const DomainMultiBitValue& source)
+    { std::function<VALUE_TYPE(VALUE_TYPE, VALUE_TYPE)> fun
+        = [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst * snd; };
+      return applyBinaryAssign(DMBBOTimesSigned, DMBBOTimesUnsigned, source, fun);
+    }
+  DomainMultiBitValue& operator/=(const DomainMultiBitValue& source)
+    { std::function<VALUE_TYPE(VALUE_TYPE, VALUE_TYPE)> fun
+        = [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst / snd; };
+      return applyBinaryAssign(DMBBODivideSigned, DMBBODivideUnsigned, source, fun);
+    }
+  DomainMultiBitValue& operator%=(const DomainMultiBitValue& source)
+    { std::function<VALUE_TYPE(VALUE_TYPE, VALUE_TYPE)> fun
+        = [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst % snd; };
+      return applyBinaryAssign(DMBBOModuloSigned, DMBBOModuloUnsigned, source, fun);
+    }
+  DomainMultiBitValue& operator|=(const DomainMultiBitValue& source)
+    { std::function<VALUE_TYPE(VALUE_TYPE, VALUE_TYPE)> fun
+        = [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst | snd; };
+      return applyBinaryAssign(DMBBOBitOr, source, fun);
+    }
+  DomainMultiBitValue& operator&=(const DomainMultiBitValue& source)
+    { std::function<VALUE_TYPE(VALUE_TYPE, VALUE_TYPE)> fun
+        = [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst & snd; };
+      return applyBinaryAssign(DMBBOBitAnd, source, fun);
+    }
+  DomainMultiBitValue& operator^=(const DomainMultiBitValue& source)
+    { std::function<VALUE_TYPE(VALUE_TYPE, VALUE_TYPE)> fun
+        = [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst ^ snd; };
+      return applyBinaryAssign(DMBBOBitExclusiveOr, source, fun);
+    }
 
-   DomainBitValue operator==(const DomainMultiBitValue& source) const
-      {  return DomainBitValue((*functionTable().multibit_binary_compare_domain)
-               (value(), DMBCOCompareEqual, source.value(), env()), *this);
-      }
-   DomainBitValue operator!=(const DomainMultiBitValue& source) const
-      {  return DomainBitValue((*functionTable().multibit_binary_compare_domain)
-               (value(), DMBCOCompareDifferent, source.value(), env()), *this);
-      }
-   DomainBitValue operator<=(const DomainMultiBitValue& source) const
-      {  return DomainBitValue((*functionTable().multibit_binary_compare_domain)
-               (value(), isSigned() ? DMBCOCompareLessOrEqualSigned : DMBCOCompareLessOrEqualUnsigned, source.value(), env()), *this);
-      }
-   DomainBitValue operator>=(const DomainMultiBitValue& source) const
-      {  return DomainBitValue((*functionTable().multibit_binary_compare_domain)
-               (value(), isSigned() ? DMBCOCompareGreaterOrEqualSigned : DMBCOCompareGreaterOrEqualUnsigned, source.value(), env()), *this);
-      }
-   DomainBitValue operator<(const DomainMultiBitValue& source) const
-      {  return DomainBitValue((*functionTable().multibit_binary_compare_domain)
-               (value(), isSigned() ? DMBCOCompareLessSigned : DMBCOCompareLessUnsigned, source.value(), env()), *this);
-      }
-   DomainBitValue operator>(const DomainMultiBitValue& source) const
-      {  return DomainBitValue((*functionTable().multibit_binary_compare_domain)
-               (value(), isSigned() ? DMBCOCompareGreaterSigned : DMBCOCompareGreaterUnsigned, source.value(), env()), *this);
-      }
+  template <typename SHT>
+  DomainMultiBitValue operator << (SHT sht) const
+    { std::function<VALUE_TYPE(VALUE_TYPE, SHT)> fun
+        = [](VALUE_TYPE fst, SHT snd) { return fst << snd; };
+      return applyBinary(DMBBOLeftShift, DomainMultiBitValue<SHT>(sht), fun);
+    }
+  template <typename SHT>
+  DomainMultiBitValue operator << (const DomainMultiBitValue<SHT>& sht) const
+    { std::function<VALUE_TYPE(VALUE_TYPE, SHT)> fun
+        = [](VALUE_TYPE fst, SHT snd) { return fst << snd; };
+      return applyBinary(DMBBOLeftShift, sht, fun);
+    }
+  template <typename SHT>
+  DomainMultiBitValue& operator <<= (SHT sht)
+    { std::function<VALUE_TYPE(VALUE_TYPE, SHT)> fun
+        = [](VALUE_TYPE fst, SHT snd) { return fst << snd; };
+      return applyBinaryAssign(DMBBOLeftShift, DomainMultiBitValue<SHT>(sht), fun);
+    }
+  template <typename SHT>
+  DomainMultiBitValue operator >> (SHT sht) const
+    { std::function<VALUE_TYPE(VALUE_TYPE, SHT)> fun
+        = [](VALUE_TYPE fst, SHT snd) { return fst >> snd; };
+      return applyBinary(DMBBOArithmeticRightShift, DMBBOLogicalRightShift,
+        DomainMultiBitValue<SHT>(sht), fun);
+    }
+  template <typename SHT>
+  DomainMultiBitValue operator >> (const DomainMultiBitValue<SHT>& sht) const
+    { std::function<VALUE_TYPE(VALUE_TYPE, SHT)> fun
+        = [](VALUE_TYPE fst, SHT snd) { return fst >> snd; };
+      return applyBinary(DMBBOArithmeticRightShift, DMBBOLogicalRightShift,
+        sht, fun);
+    }
+  template <typename SHT>
+  DomainMultiBitValue& operator >>= (SHT sht)
+    { std::function<VALUE_TYPE(VALUE_TYPE, SHT)> fun
+        = [](VALUE_TYPE fst, SHT snd) { return fst >> snd; };
+      return applyBinaryAssign(DMBBOArithmeticRightShift, DMBBOLogicalRightShift,
+        DomainMultiBitValue<SHT>(sht), fun);
+    }
 
-   template <typename TypeVal>
-   friend DomainMultiBitValue RotateRight(const DomainMultiBitValue& first, TypeVal second)
-      {  return DomainMultiBitValue((*first.functionTable().multibit_create_binary_apply)
-               (first.value(), DMBBORightRotate, DomainMultiBitValue<int32_t>(second).value(), first.env()), first);
+  DomainBitValue operator==(const DomainMultiBitValue& source) const
+    { return applyCompare(DMBCOCompareEqual, source,
+        [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst == snd; });
+    }
+  DomainBitValue operator!=(const DomainMultiBitValue& source) const
+    { return applyCompare(DMBCOCompareDifferent, source,
+        [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst != snd; });
+    }
+  DomainBitValue operator<=(const DomainMultiBitValue& source) const
+    { return applyCompare(DMBCOCompareLessOrEqualSigned, DMBCOCompareLessOrEqualUnsigned,
+        source, [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst <= snd; });
+    }
+  DomainBitValue operator>=(const DomainMultiBitValue& source) const
+    { return applyCompare(DMBCOCompareGreaterOrEqualSigned, DMBCOCompareGreaterOrEqualUnsigned,
+        source, [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst >= snd; });
+    }
+  DomainBitValue operator<(const DomainMultiBitValue& source) const
+    { return applyCompare(DMBCOCompareLessSigned, DMBCOCompareLessUnsigned,
+        source, [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst < snd; });
+    }
+  DomainBitValue operator>(const DomainMultiBitValue& source) const
+    { return applyCompare(DMBCOCompareGreaterSigned, DMBCOCompareGreaterUnsigned,
+        source, [](VALUE_TYPE fst, VALUE_TYPE snd) { return fst > snd; });
+    }
+
+  template <typename TypeVal>
+  friend this_type RotateRight(const this_type& first, TypeVal second)
+    { std::function<VALUE_TYPE(VALUE_TYPE, int32_t)> fun
+        = [](VALUE_TYPE fst, int32_t snd)
+        { return unisim::util::arithmetic::RotateRight(fst, snd); };
+      return first.applyBinary(DMBBORightRotate,
+        DomainMultiBitValue<int32_t>(second), fun);
+    }
+  friend this_type BitScanReverse(const this_type& first)
+    { return first.applyUnary(DMBUOBitScanReverse,
+        [](VALUE_TYPE fst)
+          { return unisim::util::arithmetic::BitScanReverse(fst); });
+    }
+  friend this_type RotateRight(const this_type& first, const DomainMultiBitValue<int32_t>& second)
+    { return first.applyBinary(DMBBORightRotate, second,
+        [](VALUE_TYPE fst, int32_t snd)
+          { return unisim::util::arithmetic::RotateRight(fst, snd); });
+    }
+  friend this_type ByteSwap(const this_type& first)
+    {
+      if (first.inherited::isValid())
+      { DomainMultiBitValue result = first;
+        for (int index = 0; index < sizeof(VALUE_TYPE)/2; ++index) {
+          DomainMultiBitValue first_source(first), last_source(first);
+          first_source.reduce(index*8+0, index*8+7);
+          last_source.reduce((sizeof(VALUE_TYPE)-index-1)*8+0, (sizeof(VALUE_TYPE)-index)*8-1);
+          result.bitset(index*8+0, index*8+7, last_source);
+          result.bitset((sizeof(VALUE_TYPE)-index-1)*8+0, (sizeof(VALUE_TYPE)-index)*8-1, first_source);
+        }
+        return result;
       }
-   friend DomainMultiBitValue BitScanReverse(const DomainMultiBitValue& first)
-      {  return DomainMultiBitValue((*first.functionTable().multibit_create_unary_apply)
-               (first.value(), DMBUOBitScanReverse, first.env()), first);
+      else
+        return DomainMultiBitValue(unisim::util::endian::ByteSwap(first.uConstant));
+    }
+  bool isConstant(VALUE_TYPE* value) const
+    {
+      if (inherited::isValid()) {
+        DomainIntegerConstant res;
+        res.sizeInBits = sizeof(VALUE_TYPE);
+        res.isSigned = isSigned();
+        bool result = (*functionTable().multibit_is_constant_value)(this->value(), &res);
+        if (result && value)
+           *value = (VALUE_TYPE) res.integerValue;
+        return result;
       }
-   friend DomainMultiBitValue RotateRight(const DomainMultiBitValue& first, const DomainMultiBitValue<int32_t>& second)
-      {  return DomainMultiBitValue((*first.functionTable().multibit_create_binary_apply)
-               (first.value(), DMBBORightRotate, second.value(), first.env()), first);
+      else
+      {
+        if (value)
+          *value = uConstant;
+        return true;
       }
-   friend DomainMultiBitValue ByteSwap(const DomainMultiBitValue& first)
-      {  DomainMultiBitValue result = first;
-         for (int index = 0; index < sizeof(VALUE_TYPE)/2; ++index) {
-            DomainMultiBitValue first_source(first), last_source(first);
-            first_source.reduce(index*8+0, index*8+7);
-            last_source.reduce((sizeof(VALUE_TYPE)-index-1)*8+0, (sizeof(VALUE_TYPE)-index)*8-1);
-            result.bitset(index*8+0, index*8+7, last_source);
-            result.bitset((sizeof(VALUE_TYPE)-index-1)*8+0, (sizeof(VALUE_TYPE)-index)*8-1, first_source);
-         }
-         return result;
-      }
-   bool isConstant(DomainIntegerConstant* value) const
-      {  return (*functionTable().multibit_is_constant_value)(this->value(), value); }
+    }
 };
 
 template <typename VALUE_TYPE>
@@ -1534,9 +1630,9 @@ public:
         if (id != 15)
           memoryState->setRegisterValue(id, std::move(value));
         else {
-          DomainIntegerConstant val;
+          uint32_t val;
           if (value.isConstant(&val))
-             addJumpTargetAddress(val.integerValue);
+             addJumpTargetAddress(val);
           else {
              // [TODO] forcer les disjonctions + énumérer
              // pour les dynamic jumps
@@ -1560,14 +1656,14 @@ public:
   void SetNIA( U32 const& nia, branch_type_t bt )
   {
     if (next_targets_queries) {
-      DomainIntegerConstant val;
+      uint32_t val;
       if (nia.isConstant(&val)) {
         if (bt == B_CALL)
-          addCallTargetAddress(val.integerValue);
+          addCallTargetAddress(val);
         else if (bt == B_RET)
-          addReturnTargetAddress(val.integerValue);
+          addReturnTargetAddress(val);
         else
-         addJumpTargetAddress(val.integerValue);
+         addJumpTargetAddress(val);
       }
       else {
          // [TODO] forcer les disjonctions + énumérer

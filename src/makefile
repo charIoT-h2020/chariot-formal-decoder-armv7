@@ -2,9 +2,15 @@ ARMSEC_INCLUDE_DIR=../armsec/armsec
 ARMSEC_SRC_DIR=$(ARMSEC_INCLUDE_DIR)/unisim/component/cxx/processor/arm
 ARMSEC_BUILD_INCLUDE_DIR=armsec
 
+all: check_memory
+
 armsec_decoder.so: armsec_decoder.h armsec_decoder.cpp               \
     $(ARMSEC_SRC_DIR)/disasm.hh $(ARMSEC_SRC_DIR)/disasm.cc
 	clang++ -I$(ARMSEC_INCLUDE_DIR) -I$(ARMSEC_BUILD_INCLUDE_DIR) -shared \
       -fPIC armsec_decoder.cpp                                      \
       $(ARMSEC_SRC_DIR)/disasm.cc                                   \
       -o armsec_decoder.so
+
+check_memory: check_memory.cc armsec_decoder.so
+	g++ check_memory.cc armsec_decoder.so -o check_memory
+

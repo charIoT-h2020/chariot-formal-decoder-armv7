@@ -75,8 +75,7 @@ DLL_API void free_processor(void* processor);
 DLL_API bool armsec_next_targets(void* processor, char* instruction_buffer,
       size_t buffer_size, uint64_t address, TargetAddresses target_addresses,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,
-      InterpretParameters* parameters, uint64_t* result_addresses,
-      int* result_length);
+      InterpretParameters* parameters);
 
 DLL_API bool armsec_interpret(void* processor, char* instruction_buffer,
       size_t buffer_size, uint64_t address, uint64_t target_address,

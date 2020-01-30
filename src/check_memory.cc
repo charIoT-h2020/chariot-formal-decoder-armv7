@@ -233,6 +233,11 @@ class DomainValue {
       }
 };
 
+class MemoryInterpretParameters {
+
+};
+
+class Processor;
 class MemoryState {
   private:
    static MemoryModelFunctions functions;
@@ -324,6 +329,7 @@ class MemoryState {
    bool loadDomain(const char* domainFile);
    void write(std::ostream& out) const { out << "end of memory description\n"; }
    const struct _DomainElementFunctions* getDomainFunctions() const { return &domainFunctions; }
+   void initializeMemory(Processor& proc, MemoryInterpretParameters& parameters);
 };
 
 bool
@@ -435,13 +441,10 @@ MemoryModelFunctions MemoryState::functions={
    nullptr /* &MemoryState::constraint_address */
 };
 
-class MemoryInterpretParameters {
-
-};
-
 class Processor {
   private:
    void* pvContent;
+   friend class MemoryState;
 
    static uint64_t* reallocAddresses(uint64_t* old_addresses, int old_size,
          int* new_size, void* address_container)
@@ -492,6 +495,12 @@ class Processor {
       }
 };
 
+inline void
+MemoryState::initializeMemory(Processor& proc, MemoryInterpretParameters& parameters)
+   {  initialize_memory(proc.pvContent, reinterpret_cast<MemoryModel*>(this), &functions,
+         reinterpret_cast<InterpretParameters*>(&parameters));
+   }
+
 int main(int argc, char** argv) {
    ProcessArgument processArgument(argc, argv);
    if (argc == 1) {
@@ -506,6 +515,7 @@ int main(int argc, char** argv) {
 
    Processor processor(create_processor());
    MemoryState memoryState;
+   MemoryInterpretParameters parameters;
    bool ok = memoryState.loadDomain(processArgument.hasDomain() ? processArgument.getDomain() : "domsec.so");
    if (!ok) {
       std::cerr << "unable to find domain file "
@@ -513,6 +523,7 @@ int main(int argc, char** argv) {
       return 1;
    }
    processor.setDomainFunctions(const_cast<struct _DomainElementFunctions*>(memoryState.getDomainFunctions()));
+   memoryState.initializeMemory(processor, parameters);
 
    std::ifstream binaryFile(processArgument.getInputFile(), std::ifstream::binary);
    if (!binaryFile.good()) {
@@ -536,7 +547,6 @@ int main(int argc, char** argv) {
    int countInstructions = 0;
    char* nextInstruction = instructionBuffer;
    uint64_t address = processArgument.getAddress();
-   MemoryInterpretParameters parameters;
    std::vector<uint64_t> targets;
    while (length > 0 && (targets = processor.nextTargets(nextInstruction,
                length, address, memoryState, parameters)).size() == 1) {

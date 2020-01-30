@@ -11,6 +11,6 @@ armsec_decoder.so: armsec_decoder.h armsec_decoder.cpp               \
       $(ARMSEC_SRC_DIR)/disasm.cc                                   \
       -o armsec_decoder.so
 
-check_memory: check_memory.cc armsec_decoder.so
-	g++ -O0 -g check_memory.cc armsec_decoder.so -o check_memory -Wl,-rpath .
+check_memory: check_memory.cc dll.cc armsec_decoder.so
+	g++ -O0 -g check_memory.cc dll.cc armsec_decoder.so -ldl -o check_memory -Wl,-rpath .
 

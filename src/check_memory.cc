@@ -13,8 +13,10 @@
 #include <sstream>
 #include <fstream>
 #include <vector>
+#include <memory>
 #include <map>
 #include "armsec_decoder.h"
+#include "dll.h"
 
 class ProcessArgument {
   private:
@@ -208,13 +210,33 @@ class DomainValue {
          deValue = DomainElement{};
          return res;
       }
+
+   static char* increase_buffer_size(char* buffer, int old_length, int new_length, void* awriter)
+      {  std::vector<char>* writer = reinterpret_cast<std::vector<char>*>(awriter);
+         assert(writer->size() == old_length);
+         writer->insert(writer->end(), new_length-old_length, '\0');
+         return &(*writer)[0];
+      }
    friend std::ostream& operator<<(std::ostream& out, const DomainValue& value)
-      {  std::cout << "..."; }
+      {  if (value.deValue.content && value.pfFunctions) {
+            std::vector<char> buffer;
+            buffer.insert(buffer.begin(), 20, '\0');
+            int buffer_size = 20;
+            int length = 0;
+            (*value.pfFunctions->write)(value.deValue, &buffer[0], buffer_size, &length, &buffer,
+                  &increase_buffer_size);
+            out << &buffer[0];
+         }
+         else
+            out << "...";
+         return out;
+      }
 };
 
 class MemoryState {
   private:
    static MemoryModelFunctions functions;
+   std::shared_ptr<DLL::Library> dlDomainLibrary;
    int uRegisterNumber = 0;
    std::map<int, DomainValue> mvRegisters;
    struct _DomainElementFunctions domainFunctions;
@@ -241,8 +263,9 @@ class MemoryState {
          if (result.isValid())
             std::cout << "load at register r" << registerIndex << ": value = " << result << '\n';
          else {
-            std::cout << "load at register r" << registerIndex << ": unknown value\n";
             result = DomainValue(memory->domainFunctions.multibit_create_top(32, true /* isSymbolic */), &memory->domainFunctions);
+            std::cout << "load at register r" << registerIndex << ": unknown value = "
+                      << result << "\n";
          }
          if (elementFunctions)
             *elementFunctions = &memory->domainFunctions;
@@ -254,8 +277,9 @@ class MemoryState {
          unsigned* error, DomainElementFunctions** elementFunctions)
       {  MemoryState* memory = reinterpret_cast<MemoryState*>(amemory);
          DomainValue address((*memory->domainFunctions.clone)(indirect_address), &memory->domainFunctions);
-         std::cout << "load in memory at address " << address << ": unknown value\n";
          DomainValue result(memory->domainFunctions.multibit_create_top(size, true /* isSymbolic */), &memory->domainFunctions);
+         std::cout << "load in memory at address " << address << ": unknown value = "
+                      << result << "\n";
          if (elementFunctions)
             *elementFunctions = &memory->domainFunctions;
          return result.extractElement();
@@ -265,8 +289,9 @@ class MemoryState {
          unsigned* error, DomainElementFunctions** elementFunctions)
       {  MemoryState* memory = reinterpret_cast<MemoryState*>(amemory);
          DomainValue address((*memory->domainFunctions.clone)(indirect_address), &memory->domainFunctions);
-         std::cout << "load in memory at address " << address << ": unknown value\n";
          DomainValue result(memory->domainFunctions.multibit_create_top(size, true /* isSymbolic */), &memory->domainFunctions);
+         std::cout << "load in memory at address " << address << ": unknown value = "
+                      << result << "\n";
          if (elementFunctions)
             *elementFunctions = &memory->domainFunctions;
          return result.extractElement();
@@ -276,8 +301,9 @@ class MemoryState {
          unsigned* error, DomainElementFunctions** elementFunctions)
       {  MemoryState* memory = reinterpret_cast<MemoryState*>(amemory);
          DomainValue address((*memory->domainFunctions.clone)(indirect_address), &memory->domainFunctions);
-         std::cout << "load in memory at address " << address << ": unknown value\n";
          DomainValue result(memory->domainFunctions.multifloat_create_top(size, true /* isSymbolic */), &memory->domainFunctions);
+         std::cout << "load in memory at address " << address << ": unknown value = "
+                      << result << "\n";
          if (elementFunctions)
             *elementFunctions = &memory->domainFunctions;
          return result.extractElement();
@@ -291,10 +317,111 @@ class MemoryState {
       }
 
   public:
+   MemoryState() = default;
+   MemoryState(const MemoryState&) = default;
+
    MemoryModelFunctions* getFunctions() const { return &functions; }
-   bool loadDomain(const char* domainFile) { return true; }
+   bool loadDomain(const char* domainFile);
    void write(std::ostream& out) const { out << "end of memory description\n"; }
+   const struct _DomainElementFunctions* getDomainFunctions() const { return &domainFunctions; }
 };
+
+bool
+MemoryState::loadDomain(const char* domainFile)
+{  dlDomainLibrary.reset(new DLL::Library(domainFile));
+   dlDomainLibrary->loadSymbol("domain_get_type", &domainFunctions.get_type);
+   dlDomainLibrary->loadSymbol("domain_query_zero_result", &domainFunctions.query_zero_result);
+   dlDomainLibrary->loadSymbol("domain_get_size_in_bits", &domainFunctions.get_size_in_bits);
+   dlDomainLibrary->loadSymbol("domain_free", &domainFunctions.free);
+   dlDomainLibrary->loadSymbol("domain_clone", &domainFunctions.clone);
+
+   dlDomainLibrary->loadSymbol("domain_bit_create_constant", &domainFunctions.bit_create_constant);
+   dlDomainLibrary->loadSymbol("domain_bit_create_top", &domainFunctions.bit_create_top);
+   dlDomainLibrary->loadSymbol("domain_bit_create_cast_multibit", &domainFunctions.bit_create_cast_multibit);
+   dlDomainLibrary->loadSymbol("domain_bit_unary_apply_assign", &domainFunctions.bit_unary_apply_assign);
+   dlDomainLibrary->loadSymbol("domain_bit_create_unary_apply", &domainFunctions.bit_create_unary_apply);
+   dlDomainLibrary->loadSymbol("domain_bit_binary_apply_assign", &domainFunctions.bit_binary_apply_assign);
+   dlDomainLibrary->loadSymbol("domain_bit_create_binary_apply", &domainFunctions.bit_create_binary_apply);
+   dlDomainLibrary->loadSymbol("domain_bit_binary_compare", &domainFunctions.bit_binary_compare);
+   dlDomainLibrary->loadSymbol("domain_bit_binary_compare_domain", &domainFunctions.bit_binary_compare_domain);
+   dlDomainLibrary->loadSymbol("domain_bit_guard_assign", &domainFunctions.bit_guard_assign);
+   dlDomainLibrary->loadSymbol("domain_bit_query_boolean", &domainFunctions.bit_query_boolean);
+   dlDomainLibrary->loadSymbol("domain_bit_cast_multibit_constraint", &domainFunctions.bit_cast_multibit_constraint);
+   dlDomainLibrary->loadSymbol("domain_bit_unary_constraint", &domainFunctions.bit_unary_constraint);
+   dlDomainLibrary->loadSymbol("domain_bit_binary_constraint", &domainFunctions.bit_binary_constraint);
+   dlDomainLibrary->loadSymbol("domain_bit_compare_constraint", &domainFunctions.bit_compare_constraint);
+   dlDomainLibrary->loadSymbol("domain_bit_is_constant_value", &domainFunctions.bit_is_constant_value);
+
+   dlDomainLibrary->loadSymbol("domain_multibit_create_constant", &domainFunctions.multibit_create_constant);
+   dlDomainLibrary->loadSymbol("domain_multibit_create_top", &domainFunctions.multibit_create_top);
+   dlDomainLibrary->loadSymbol("domain_multibit_create_interval_and_absorb", &domainFunctions.multibit_create_interval_and_absorb);
+   dlDomainLibrary->loadSymbol("domain_multibit_create_cast_bit", &domainFunctions.multibit_create_cast_bit);
+   dlDomainLibrary->loadSymbol("domain_multibit_create_cast_shift_bit", &domainFunctions.multibit_create_cast_shift_bit);
+   dlDomainLibrary->loadSymbol("domain_multibit_create_cast_multibit", &domainFunctions.multibit_create_cast_multibit);
+   dlDomainLibrary->loadSymbol("domain_multibit_create_cast_multifloat", &domainFunctions.multibit_create_cast_multifloat);
+   dlDomainLibrary->loadSymbol("domain_multibit_create_cast_multifloat_ptr", &domainFunctions.multibit_create_cast_multifloat_ptr);
+   dlDomainLibrary->loadSymbol("domain_multibit_unary_apply_assign", &domainFunctions.multibit_unary_apply_assign);
+   dlDomainLibrary->loadSymbol("domain_multibit_create_unary_apply", &domainFunctions.multibit_create_unary_apply);
+   dlDomainLibrary->loadSymbol("domain_multibit_extend_apply_assign", &domainFunctions.multibit_extend_apply_assign);
+   dlDomainLibrary->loadSymbol("domain_multibit_create_extend_apply", &domainFunctions.multibit_create_extend_apply);
+   dlDomainLibrary->loadSymbol("domain_multibit_reduce_apply_assign", &domainFunctions.multibit_reduce_apply_assign);
+   dlDomainLibrary->loadSymbol("domain_multibit_create_reduce_apply", &domainFunctions.multibit_create_reduce_apply);
+   dlDomainLibrary->loadSymbol("domain_multibit_bitset_apply_assign", &domainFunctions.multibit_bitset_apply_assign);
+   dlDomainLibrary->loadSymbol("domain_multibit_create_bitset_apply", &domainFunctions.multibit_create_bitset_apply);
+   dlDomainLibrary->loadSymbol("domain_multibit_binary_apply_assign", &domainFunctions.multibit_binary_apply_assign);
+   dlDomainLibrary->loadSymbol("domain_multibit_create_binary_apply", &domainFunctions.multibit_create_binary_apply);
+   dlDomainLibrary->loadSymbol("domain_multibit_binary_compare", &domainFunctions.multibit_binary_compare);
+   dlDomainLibrary->loadSymbol("domain_multibit_binary_compare_domain", &domainFunctions.multibit_binary_compare_domain);
+   dlDomainLibrary->loadSymbol("domain_multibit_guard_assign", &domainFunctions.multibit_guard_assign);
+   dlDomainLibrary->loadSymbol("domain_multibit_query_boolean", &domainFunctions.multibit_query_boolean);
+   dlDomainLibrary->loadSymbol("domain_multibit_cast_bit_constraint", &domainFunctions.multibit_cast_bit_constraint);
+   dlDomainLibrary->loadSymbol("domain_multibit_cast_shift_bit_constraint", &domainFunctions.multibit_cast_shift_bit_constraint);
+   dlDomainLibrary->loadSymbol("domain_multibit_cast_multifloat_constraint", &domainFunctions.multibit_cast_multifloat_constraint);
+   dlDomainLibrary->loadSymbol("domain_multibit_cast_multifloat_ptr_constraint", &domainFunctions.multibit_cast_multifloat_ptr_constraint);
+   dlDomainLibrary->loadSymbol("domain_multibit_unary_constraint", &domainFunctions.multibit_unary_constraint);
+   dlDomainLibrary->loadSymbol("domain_multibit_extend_constraint", &domainFunctions.multibit_extend_constraint);
+   dlDomainLibrary->loadSymbol("domain_multibit_reduce_constraint", &domainFunctions.multibit_reduce_constraint);
+   dlDomainLibrary->loadSymbol("domain_multibit_bitset_constraint", &domainFunctions.multibit_bitset_constraint);
+   dlDomainLibrary->loadSymbol("domain_multibit_binary_constraint", &domainFunctions.multibit_binary_constraint);
+   dlDomainLibrary->loadSymbol("domain_multibit_compare_constraint", &domainFunctions.multibit_compare_constraint);
+   dlDomainLibrary->loadSymbol("domain_multibit_is_constant_value", &domainFunctions.multibit_is_constant_value);
+
+   dlDomainLibrary->loadSymbol("domain_multifloat_create_constant", &domainFunctions.multifloat_create_constant);
+   dlDomainLibrary->loadSymbol("domain_multifloat_create_top", &domainFunctions.multifloat_create_top);
+   dlDomainLibrary->loadSymbol("domain_multifloat_create_interval_and_absorb", &domainFunctions.multifloat_create_interval_and_absorb);
+   dlDomainLibrary->loadSymbol("domain_multifloat_create_cast_multibit", &domainFunctions.multifloat_create_cast_multibit);
+   dlDomainLibrary->loadSymbol("domain_multifloat_query_to_multibit", &domainFunctions.multifloat_query_to_multibit);
+   dlDomainLibrary->loadSymbol("domain_multifloat_cast_multifloat_assign", &domainFunctions.multifloat_cast_multifloat_assign);
+   dlDomainLibrary->loadSymbol("domain_multifloat_cast_multifloat", &domainFunctions.multifloat_cast_multifloat);
+   dlDomainLibrary->loadSymbol("domain_multifloat_unary_apply_assign", &domainFunctions.multifloat_unary_apply_assign);
+   dlDomainLibrary->loadSymbol("domain_multifloat_create_unary_apply", &domainFunctions.multifloat_create_unary_apply);
+   dlDomainLibrary->loadSymbol("domain_multifloat_flush_to_zero", &domainFunctions.multifloat_flush_to_zero);
+   dlDomainLibrary->loadSymbol("domain_multifloat_binary_apply_assign", &domainFunctions.multifloat_binary_apply_assign);
+   dlDomainLibrary->loadSymbol("domain_multifloat_create_binary_apply", &domainFunctions.multifloat_create_binary_apply);
+   dlDomainLibrary->loadSymbol("domain_multifloat_binary_compare", &domainFunctions.multifloat_binary_compare);
+   dlDomainLibrary->loadSymbol("domain_multifloat_binary_compare_domain", &domainFunctions.multifloat_binary_compare_domain);
+   dlDomainLibrary->loadSymbol("domain_multifloat_binary_full_compare_domain", &domainFunctions.multifloat_binary_full_compare_domain);
+   dlDomainLibrary->loadSymbol("domain_multifloat_guard_assign", &domainFunctions.multifloat_guard_assign);
+   dlDomainLibrary->loadSymbol("domain_multifloat_ternary_apply_assign", &domainFunctions.multifloat_ternary_apply_assign);
+   dlDomainLibrary->loadSymbol("domain_multifloat_ternary_query", &domainFunctions.multifloat_ternary_query);
+   dlDomainLibrary->loadSymbol("domain_multifloat_create_ternary_apply", &domainFunctions.multifloat_create_ternary_apply);
+   dlDomainLibrary->loadSymbol("domain_multifloat_cast_multibit_constraint", &domainFunctions.multifloat_cast_multibit_constraint);
+   dlDomainLibrary->loadSymbol("domain_multifloat_query_to_multibit_constraint", &domainFunctions.multifloat_query_to_multibit_constraint);
+   dlDomainLibrary->loadSymbol("domain_multifloat_cast_multifloat_constraint", &domainFunctions.multifloat_cast_multifloat_constraint);
+   dlDomainLibrary->loadSymbol("domain_multifloat_unary_constraint", &domainFunctions.multifloat_unary_constraint);
+   dlDomainLibrary->loadSymbol("domain_multifloat_binary_constraint", &domainFunctions.multifloat_binary_constraint);
+   dlDomainLibrary->loadSymbol("domain_multifloat_compare_constraint", &domainFunctions.multifloat_compare_constraint);
+   dlDomainLibrary->loadSymbol("domain_multifloat_ternary_constraint", &domainFunctions.multifloat_ternary_constraint);
+   dlDomainLibrary->loadSymbol("domain_multifloat_is_constant_value", &domainFunctions.multifloat_is_constant_value);
+   dlDomainLibrary->loadSymbol("domain_write", &domainFunctions.write);
+   dlDomainLibrary->loadSymbol("domain_merge", &domainFunctions.merge);
+   dlDomainLibrary->loadSymbol("domain_intersect", &domainFunctions.intersect);
+   dlDomainLibrary->loadSymbol("domain_contain", &domainFunctions.contain);
+   dlDomainLibrary->loadSymbol("domain_create_disjunction_and_absorb", &domainFunctions.create_disjunction_and_absorb);
+   dlDomainLibrary->loadSymbol("domain_disjunction_absorb", &domainFunctions.disjunction_absorb);
+   dlDomainLibrary->loadSymbol("domain_specialize", &domainFunctions.specialize);
+   return true;
+}
 
 MemoryModelFunctions MemoryState::functions={
    &MemoryState::set_number_of_registers,
@@ -335,6 +462,8 @@ class Processor {
       {  source.pvContent = nullptr; }
    ~Processor() { free_processor(pvContent); }
 
+   void setDomainFunctions(struct _DomainElementFunctions* functions)
+      {  set_domain_functions(pvContent, functions); }
    std::vector<uint64_t> nextTargets(char* nextInstruction, int length, uint64_t address,
          const MemoryState& memoryState, MemoryInterpretParameters& parameters)
       {  std::vector<uint64_t> result;
@@ -347,7 +476,7 @@ class Processor {
          argument.realloc_addresses = &reallocAddresses;
          argument.address_container = &result;
          MemoryState memory(memoryState);
-         bool isValid = armsec_next_targets(this, nextInstruction, length, address,
+         bool isValid = armsec_next_targets(pvContent, nextInstruction, length, address,
                argument, reinterpret_cast<MemoryModel*>(&memory), memory.getFunctions(),
                reinterpret_cast<InterpretParameters*>(&parameters));
          assert(isValid);
@@ -356,7 +485,7 @@ class Processor {
 
    void interpret(char* instruction, int length, uint64_t address,
          uint64_t targetAddress, MemoryState& memoryState, MemoryInterpretParameters& parameters)
-      {  bool isValid = armsec_interpret(this, instruction, length, address, targetAddress,
+      {  bool isValid = armsec_interpret(pvContent, instruction, length, address, targetAddress,
                reinterpret_cast<MemoryModel*>(&memoryState), memoryState.getFunctions(),
                reinterpret_cast<InterpretParameters*>(&parameters));
          assert(isValid);
@@ -383,6 +512,7 @@ int main(int argc, char** argv) {
          << (processArgument.hasDomain() ? processArgument.getDomain() : "domsec.so") << std::endl;
       return 1;
    }
+   processor.setDomainFunctions(const_cast<struct _DomainElementFunctions*>(memoryState.getDomainFunctions()));
 
    std::ifstream binaryFile(processArgument.getInputFile(), std::ifstream::binary);
    if (!binaryFile.good()) {

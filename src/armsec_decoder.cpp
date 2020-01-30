@@ -409,7 +409,7 @@ public:
       } else {
         inherited::operator= ( this_type(Empty(), other) );
         if (inherited::hasFunctionTable())
-          svalue() = (*functionTable().multibit_create_cast_multibit)(other.value(),8*sizeof(SRC_VALUE_TYPE),8*sizeof(VALUE_TYPE),std::numeric_limits<SRC_VALUE_TYPE>::is_signed);
+          svalue() = (*functionTable().multibit_create_cast_multibit)(other.value(),8*sizeof(VALUE_TYPE), std::numeric_limits<VALUE_TYPE>::is_signed, env());
         else
           uConstant = other.uConstant;
       }
@@ -1201,6 +1201,8 @@ class MemoryState {
 
    void setNumberOfRegisters(int number)
       {  (*pfFunctions->set_number_of_registers)(pmModel, number); }
+   void setEvaluationEnvironment(DomainEvaluationEnvironment& domainEnvironment)
+      {  peDomainEnv = &domainEnvironment; }
    void setRegisterValue(int registerIndex, DomainValue&& value)
       {  (*pfFunctions->set_register_value)(pmModel, registerIndex,
             &value.svalue(), pParameters, &uErrors);
@@ -1215,7 +1217,8 @@ class MemoryState {
       {  DomainElementFunctions* domainFunctions = nullptr; 
          DomainElement result = (*pfFunctions->get_register_value)
                (pmModel, registerIndex, pParameters, &uErrors, &domainFunctions);
-         return DomainBitValue(std::move(result), domainFunctions, peDomainEnv);
+         DomainMultiBitValue<char> res(std::move(result), domainFunctions, peDomainEnv); 
+         return DomainBitValue(std::move(res));
       }
    template <typename TypeInt>
    DomainMultiBitValue<TypeInt> getRegisterValueAsMultiBit(int registerIndex) const
@@ -1731,6 +1734,7 @@ public:
      {  memoryState = &memory;
         // [TODO] manage ForeignRegisters
         memory.setNumberOfRegisters(RLEnd);
+        memory.setEvaluationEnvironment(domainEnvironment);
      }
   
   //   =====================================================================
@@ -2799,7 +2803,7 @@ struct Translator
   
   template <class ISA>
   void
-  extract( ISA& isa )
+  extract( ISA& isa , Processor& state)
   {
     // Instruction decoding
     struct Instruction
@@ -2830,7 +2834,6 @@ struct Translator
     }
     
     // Disassemble
-    Processor state;
     try { instruction->execute( state ); }
     catch (...) { throw; }
     
@@ -2850,7 +2853,7 @@ struct Translator
       }
   }
 
-  void next_targets()
+  void next_targets(Processor& proc)
   {
     try
       {
@@ -2863,7 +2866,7 @@ struct Translator
         else if (status.iset == status.Thumb)
           {
             THUMBISA thumbisa;
-            extract( thumbisa );
+            extract( thumbisa, proc );
           }
         else
           throw 0;
@@ -2877,7 +2880,7 @@ struct Translator
         throw;
       }
   }
-  void interpret()
+  void interpret(Processor& proc)
   {
     try
       {
@@ -2890,7 +2893,7 @@ struct Translator
         else if (status.iset == status.Thumb)
           {
             THUMBISA thumbisa;
-            extract( thumbisa );
+            extract( thumbisa, proc );
           }
         else
           throw 0;
@@ -2914,6 +2917,11 @@ extern "C" {
 DLL_API void* create_processor()
 {  return new Processor(); }
 
+DLL_API void set_domain_functions(void* aprocessor, struct _DomainElementFunctions* functionTable)
+{  auto* processor = reinterpret_cast<Processor*>(aprocessor);
+   processor->setDomainFunctions(*functionTable);
+}
+
 DLL_API void free_processor(void* processor)
 {  delete reinterpret_cast<Processor*>(processor); }
 
@@ -2934,7 +2942,7 @@ DLL_API bool armsec_next_targets(void* processor, char* instruction_buffer,
   Translator actset( address, code );
   Processor::StatusRegister& status = actset.status;
   status.iset = status.Thumb;
-  actset.next_targets();
+  actset.next_targets(*proc);
   return true;
 }
 
@@ -2955,7 +2963,7 @@ DLL_API bool armsec_interpret(void* processor, char* instruction_buffer,
   Translator actset( address, code );
   Processor::StatusRegister& status = actset.status;
   status.iset = status.Thumb;
-  actset.interpret();
+  actset.interpret(*proc);
   return true;
 }
 

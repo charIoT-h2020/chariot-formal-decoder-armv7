@@ -70,6 +70,7 @@ typedef struct _TargetAddresses {
 } TargetAddresses;
 
 DLL_API void* create_processor();
+DLL_API void set_domain_functions(void* processor, struct _DomainElementFunctions* functionTable);
 DLL_API void free_processor(void* processor);
 
 DLL_API bool armsec_next_targets(void* processor, char* instruction_buffer,

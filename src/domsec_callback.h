@@ -234,7 +234,8 @@ struct _DomainElementFunctions {
       DomainEvaluationEnvironment* env);
   DomainBitElement (*multibit_create_cast_shift_bit)(DomainMultiBitElement multibitDomain,
       int shift, DomainEvaluationEnvironment* env);
-  DomainMultiBitElement (*multibit_create_cast_multibit)(DomainMultiBitElement multibitSource, int sourceSizeInBits, int destinationSizeInBits, bool isSigned);
+  DomainMultiBitElement (*multibit_create_cast_multibit)(DomainMultiBitElement multibitSource,
+        int destinationSizeInBits, bool isSigned, DomainEvaluationEnvironment* env);
   DomainMultiFloatElement (*multibit_create_cast_multifloat)(
       DomainMultiBitElement multibitDomain, int sizeInBits, bool isSigned,
       DomainEvaluationEnvironment* env);

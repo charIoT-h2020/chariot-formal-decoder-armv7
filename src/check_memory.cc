@@ -13,6 +13,7 @@
 #include <sstream>
 #include <fstream>
 #include <vector>
+#include <map>
 #include "armsec_decoder.h"
 
 class ProcessArgument {
@@ -126,17 +127,186 @@ ProcessArgument::process(char** argument, int& currentArgument) {
    return true;
 }
 
+class DomainValue {
+  private:
+   DomainElement deValue;
+   struct _DomainElementFunctions* pfFunctions;
+
+  protected:
+   friend class MemoryState;
+   DomainElement& svalue() { return deValue; }
+   bool hasFunctionTable() const { return pfFunctions; }
+   struct _DomainElementFunctions& functionTable() const { assert(pfFunctions); return *pfFunctions; }
+
+  public:
+   const DomainElement& value() const { return deValue; }
+
+  public:
+   DomainValue() : deValue{}, pfFunctions(nullptr) {}
+   DomainValue(DomainElement&& value, struct _DomainElementFunctions* functions)
+      :  deValue(std::move(value)), pfFunctions(functions) {}
+   DomainValue(DomainValue&& source)
+      :  deValue(source.deValue), pfFunctions(source.pfFunctions)
+      {  source.deValue.content = nullptr; }
+   DomainValue(const DomainValue& source)
+      :  deValue{ nullptr }, pfFunctions(source.pfFunctions)
+      {  if (source.deValue.content) {
+            assert(pfFunctions);
+            deValue = (*pfFunctions->clone)(source.deValue);
+         }
+      }
+   DomainValue& operator=(DomainValue&& source)
+      {  if (this == &source)
+            return *this;
+         if (deValue.content)
+         {
+            assert(pfFunctions);
+            (*pfFunctions->free)(&deValue);
+         }
+         pfFunctions = source.pfFunctions;
+         deValue = source.deValue;
+         source.deValue.content = nullptr;
+         return *this;
+      }
+   DomainValue& operator=(const DomainValue& source)
+      {  if (this == &source)
+            return *this;
+         if (deValue.content)
+            (*pfFunctions->free)(&deValue);
+         pfFunctions = source.pfFunctions;
+         if (source.deValue.content)
+         {
+            assert(pfFunctions);
+            deValue = (*pfFunctions->clone)(source.deValue);
+         }
+         return *this;
+      }
+   ~DomainValue()
+      { if (deValue.content && pfFunctions) (*pfFunctions->free)(&deValue); }
+
+   void clear()
+      {  if (deValue.content)
+         {  assert(pfFunctions);
+            (*pfFunctions->free)(&deValue);
+         }
+      }
+   bool isValid() const { return deValue.content; }
+   DomainType getType() const
+      {  assert(pfFunctions);
+         return (*pfFunctions->get_type)(deValue);
+      } 
+   ZeroResult queryZeroResult() const
+      {  assert(pfFunctions);
+         return (*pfFunctions->query_zero_result)(deValue);
+      } 
+   int getSizeInBits() const
+      {  assert(pfFunctions);
+         return (*pfFunctions->get_size_in_bits)(deValue);
+      } 
+   DomainElement extractElement()
+      {  auto res = deValue;
+         deValue = DomainElement{};
+         return res;
+      }
+   friend std::ostream& operator<<(std::ostream& out, const DomainValue& value)
+      {  std::cout << "..."; }
+};
+
 class MemoryState {
   private:
    static MemoryModelFunctions functions;
+   int uRegisterNumber = 0;
+   std::map<int, DomainValue> mvRegisters;
+   struct _DomainElementFunctions domainFunctions;
+
+   /* call-back functions */
+   static void set_number_of_registers(MemoryModel* amemory, int numbers)
+      {  MemoryState* memory = reinterpret_cast<MemoryState*>(amemory);
+         memory->uRegisterNumber = numbers;
+      }
+   static void set_register_value(MemoryModel* amemory, int registerIndex,
+         DomainElement* avalue, InterpretParameters* parameters,
+         unsigned* error /* set of MemoryEvaluationErrorFlags */)
+      {  MemoryState* memory = reinterpret_cast<MemoryState*>(amemory);
+         DomainValue value(std::move(*avalue), &memory->domainFunctions);
+         std::cout << "write at register r" << registerIndex << ": value = " << value << '\n';
+         memory->mvRegisters[registerIndex] = std::move(value);
+      }
+   static DomainElement get_register_value(MemoryModel* amemory,
+         int registerIndex, InterpretParameters* parameters,
+         unsigned* error /* set of MemoryEvaluationErrorFlags */,
+         DomainElementFunctions** elementFunctions)
+      {  MemoryState* memory = reinterpret_cast<MemoryState*>(amemory);
+         DomainValue result = memory->mvRegisters[registerIndex];
+         if (result.isValid())
+            std::cout << "load at register r" << registerIndex << ": value = " << result << '\n';
+         else {
+            std::cout << "load at register r" << registerIndex << ": unknown value\n";
+            result = DomainValue(memory->domainFunctions.multibit_create_top(32, true /* isSymbolic */), &memory->domainFunctions);
+         }
+         if (elementFunctions)
+            *elementFunctions = &memory->domainFunctions;
+         return result.extractElement();
+      }
+
+   static DomainElement load_multibit_value(MemoryModel* amemory,
+         DomainElement indirect_address, size_t size, InterpretParameters* parameters,
+         unsigned* error, DomainElementFunctions** elementFunctions)
+      {  MemoryState* memory = reinterpret_cast<MemoryState*>(amemory);
+         DomainValue address((*memory->domainFunctions.clone)(indirect_address), &memory->domainFunctions);
+         std::cout << "load in memory at address " << address << ": unknown value\n";
+         DomainValue result(memory->domainFunctions.multibit_create_top(size, true /* isSymbolic */), &memory->domainFunctions);
+         if (elementFunctions)
+            *elementFunctions = &memory->domainFunctions;
+         return result.extractElement();
+      }
+   static DomainElement load_multibit_disjunctive_value(MemoryModel* amemory,
+         DomainElement indirect_address, size_t size, InterpretParameters* parameters,
+         unsigned* error, DomainElementFunctions** elementFunctions)
+      {  MemoryState* memory = reinterpret_cast<MemoryState*>(amemory);
+         DomainValue address((*memory->domainFunctions.clone)(indirect_address), &memory->domainFunctions);
+         std::cout << "load in memory at address " << address << ": unknown value\n";
+         DomainValue result(memory->domainFunctions.multibit_create_top(size, true /* isSymbolic */), &memory->domainFunctions);
+         if (elementFunctions)
+            *elementFunctions = &memory->domainFunctions;
+         return result.extractElement();
+      }
+   static DomainElement load_multifloat_value(MemoryModel* amemory,
+         DomainElement indirect_address, size_t size, InterpretParameters* parameters,
+         unsigned* error, DomainElementFunctions** elementFunctions)
+      {  MemoryState* memory = reinterpret_cast<MemoryState*>(amemory);
+         DomainValue address((*memory->domainFunctions.clone)(indirect_address), &memory->domainFunctions);
+         std::cout << "load in memory at address " << address << ": unknown value\n";
+         DomainValue result(memory->domainFunctions.multifloat_create_top(size, true /* isSymbolic */), &memory->domainFunctions);
+         if (elementFunctions)
+            *elementFunctions = &memory->domainFunctions;
+         return result.extractElement();
+      }
+   static void store_value(MemoryModel* amemory, DomainElement indirect_address,
+         DomainElement avalue, InterpretParameters* parameters, unsigned* error)
+      {  MemoryState* memory = reinterpret_cast<MemoryState*>(amemory);
+         DomainValue value((*memory->domainFunctions.clone)(avalue), &memory->domainFunctions);
+         DomainValue address((*memory->domainFunctions.clone)(indirect_address), &memory->domainFunctions);
+         std::cout << "write in memory at address " << address << ": value = " << value << "\n";
+      }
 
   public:
    MemoryModelFunctions* getFunctions() const { return &functions; }
    bool loadDomain(const char* domainFile) { return true; }
-   void write(std::ostream& out) const {}
+   void write(std::ostream& out) const { out << "end of memory description\n"; }
 };
 
-MemoryModelFunctions MemoryState::functions={};
+MemoryModelFunctions MemoryState::functions={
+   &MemoryState::set_number_of_registers,
+   &MemoryState::set_register_value,
+   &MemoryState::get_register_value,
+   &MemoryState::load_multibit_value,
+   &MemoryState::load_multibit_disjunctive_value,
+   &MemoryState::load_multifloat_value,
+   &MemoryState::store_value,
+   nullptr /* &MemoryState::constraint_store_value */,
+   nullptr /* &MemoryState::constraint_address */
+};
 
 class MemoryInterpretParameters {
 

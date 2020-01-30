@@ -108,7 +108,8 @@ typedef enum _DomainMultiFloatUnaryOperation
 {
    DMFUOUndefined, DMFUOCastFloat, DMFUOCastDouble, DMFUOOpposite, DMFUOAbs,
    DMFUOAcos, DMFUOAsin, DMFUOAtan, DMFUOCeil, DMFUOCos, DMFUOCosh, DMFUOExp, DMFUOFabs, DMFUOFloor,
-      DMFUOLog, DMFUOLog10, DMFUOPow, DMFUOSin, DMFUOSinh, DMFUOSqrt, DMFUOTan, DMFUOTanh
+      DMFUOLog, DMFUOLog10, DMFUOPow, DMFUOSin, DMFUOSinh, DMFUOSqrt, DMFUOTan, DMFUOTanh,
+   DMFUOSetToNaN, DMFUOSetQuietBit
 } DomainMultiFloatUnaryOperation;
 
 typedef enum _DomainMultiFloatBinaryOperation
@@ -326,6 +327,8 @@ struct _DomainElementFunctions {
   DomainMultiFloatElement (*multifloat_create_unary_apply)(
       DomainMultiFloatElement element, DomainMultiFloatUnaryOperation operation,
       DomainEvaluationEnvironment* env);
+  DomainBitElement (*multifloat_flush_to_zero)(
+      DomainMultiFloatElement* element, DomainEvaluationEnvironment* env);
   bool (*multifloat_binary_apply_assign)(DomainMultiFloatElement* element,
       DomainMultiFloatBinaryOperation operation, DomainMultiFloatElement source,
       DomainEvaluationEnvironment* env);

@@ -1142,11 +1142,22 @@ public:
       }
     }
 
-  void setToNaN();
-  void setQuietBit();
-  DomainBitValue setFlushToZero();
-  DomainBitValue queryIsSNaN() const;
-  DomainBitValue queryIsQNaN() const;
+  void setToNaN()
+    { (*functionTable().multifloat_unary_apply_assign)(&svalue(), DMFUOSetToNaN, env()); }
+  void setQuietBit()
+    { (*functionTable().multifloat_unary_apply_assign)(&svalue(), DMFUOSetQuietBit, env()); }
+  DomainBitValue setFlushToZero()
+    { return DomainBitValue((*functionTable().multifloat_flush_to_zero)(&svalue(), env()), *this); }
+  DomainBitValue queryIsSNaN() const
+    { DomainMultiBitValue<char> res((*functionTable().multifloat_query_to_multibit)(value(),
+             DMFIOIsSNaN, env()), *this);
+      return DomainBitValue(res);
+    }
+  DomainBitValue queryIsQNaN() const
+    { DomainMultiBitValue<char> res((*functionTable().multifloat_query_to_multibit)(value(),
+             DMFIOIsQNaN, env()), *this);
+      return DomainBitValue(res);
+    }
 
   // used with arguments coming from Processor
   void multAssignAndAdd(const this_type& op1, const this_type& op2)
@@ -1479,7 +1490,7 @@ struct Processor
     template <typename RF>
     U32    Get( RF const& _ )
     {
-      //  StaticAssert<(RF::pos > 31) or ((RF::pos + RF::size) <= 28)>::check(); // NZCV
+      // StaticAssert<(RF::pos > 31) or ((RF::pos + RF::size) <= 28)>::check(); // NZCV
       StaticAssert<(RF::pos > 24) or ((RF::pos + RF::size) <= 24)>::check(); // ITLO, J
       StaticAssert<(RF::pos >  9) or ((RF::pos + RF::size) <=  9)>::check(); // ITHI, E
       StaticAssert<(RF::pos >  5) or ((RF::pos + RF::size) <=  0)>::check(); // T, MODE
@@ -1498,11 +1509,11 @@ struct Processor
     
     void   Set( ERF const& _, const U32& value ) { if (proc.Test(value != U32(bigendian))) proc.UnpredictableInsnBehaviour(); }
     void   SetITState( uint8_t init_val, Processor& p )
-       {  this->Set(ITLORF(), U32(init_val));
+       { this->Set(ITLORF(), U32(init_val));
          this->Set(ITHIRF(), U32(init_val>>2));
        }
     void   SetITState( U8&& init_val )
-       {  this->Set(ITLORF(), U32(init_val));
+       { this->Set(ITLORF(), U32(init_val));
          this->Set(ITHIRF(), U32(init_val>>2));
        }
     BOOL   InITBlock()   {  return (((Get( ITHIRF() ) << 2) | Get( ITLORF() )) & U32(0b1111)) != U32(0); }
@@ -1901,7 +1912,7 @@ public:
   Mode&  CurrentMode() { /* throw Unimplemented(); */ return mode; }
   Mode&  GetMode(uint8_t) { throw Unimplemented(); return mode; }
   
-  virtual CP15Reg& CP15GetRegister( uint8_t crn, uint8_t opcode1, uint8_t crm, uint8_t opcode2 );
+  CP15Reg& CP15GetRegister( uint8_t crn, uint8_t opcode1, uint8_t crm, uint8_t opcode2 );
   
   U32         CP15ReadRegister( uint8_t crn, uint8_t opcode1, uint8_t crm, uint8_t opcode2 )
   { return CP15GetRegister( crn, opcode1, crm, opcode2 ).Read( *this ); }
@@ -2226,6 +2237,552 @@ bool CheckCondition( Processor& state, Processor::ITCond const& cond )
     ((cc == U8(14)) and DomainBitValue(true)));
 }
 
+Processor::CP15Reg&
+Processor::CP15GetRegister( uint8_t crn, uint8_t opcode1, uint8_t crm, uint8_t opcode2 )
+{
+  switch (CP15ENCODE( crn, opcode1, crm, opcode2 ))
+    {
+      /****************************
+       * Identification registers *
+       ****************************/
+    case CP15ENCODE( 0, 0, 0, 1 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "CTR, Cache Type Register"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("ctr").code); }
+        } x;
+        return x;
+      } break;
+          
+    case CP15ENCODE( 0, 0, 0, 5 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "MPIDR, Multiprocessor Affinity Register"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("mpidr").code); }
+        } x;
+        return x;
+      } break;
+          
+    case CP15ENCODE( 0, 0, 1, 0 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "ID_PFR0, Processor Feature Register 0"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("id_pfr0").code); }
+        } x;
+        return x;
+      } break;
+          
+    case CP15ENCODE( 0, 1, 0, 0 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "CCSIDR, Cache Size ID Registers"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("ccsidr").code); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 0, 1, 0, 1 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "CLIDR, Cache Level ID Register"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("clidr").code); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 0, 2, 0, 0 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "CSSELR, Cache Size Selection Register"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("csselr").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("csselr").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+      
+      /****************************
+       * System control registers *
+       ****************************/
+    case CP15ENCODE( 1, 0, 0, 0 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "SCTLR, System Control Register"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("sctlr").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("sctlr").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 1, 0, 0, 1 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "ACTLR, Auxiliary Control Register"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("actlr").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("actlr").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 1, 0, 0, 2 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "CPACR, Coprocessor Access Control Register"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("cpacr").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("cpacr").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 1, 0, 1, 2 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "NSACR, Non-Secure Access Control Register"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("nsacr").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("nsacr").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+      /*******************************************
+       * Memory protection and control registers *
+       *******************************************/
+    case CP15ENCODE( 2, 0, 0, 0 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "TTBR0, Translation Table Base Register 0"; }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("ttbr0").code, U32(value)); }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("ttbr0").code); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 2, 0, 0, 1 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "TTBR1, Translation Table Base Register 1"; }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("ttbr1").code, U32(value)); }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("ttbr1").code); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 2, 0, 0, 2 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "TTBCR, Translation Table Base Control Register"; }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("ttbcr").code, U32(value)); }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("ttbcr").code); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 3, 0, 0, 0 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "DACR, Domain Access Control Register"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("dacr").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("dacr").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+
+      /*********************************
+       * Memory system fault registers *
+       *********************************/
+    case CP15ENCODE( 5, 0, 0, 0 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "DFSR, Data Fault Status Register"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("dfsr").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("dfsr").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 5, 0, 0, 1 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "IFSR, Instruction Fault Status Register"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("ifsr").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("ifsr").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 6, 0, 0, 0 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "DFAR, Data Fault Status Register"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("dfar").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("dfar").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 6, 0, 0, 2 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "IFAR, Instruction Fault Status Register"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("ifar").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("ifar").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+      /***************************************************************
+       * Cache maintenance, address translation, and other functions *
+       ***************************************************************/
+          
+    case CP15ENCODE( 7, 0, 1, 0 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "ICIALLUIS, Invalidate all instruction caches to PoU Inner Shareable"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("icialluis").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("icialluis").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 7, 0, 1, 6 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "BPIALLIS, Invalidate all branch predictors Inner Shareable"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("bpiallis").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("bpiallis").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 7, 0, 5, 0 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "ICIALLU, Invalidate all instruction caches to PoU"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("iciallu").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("iciallu").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 7, 0, 5, 1 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "ICIMVAU, Clean data* cache line by MVA to PoU"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("icimvau").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("icimvau").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 7, 0, 5, 6 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "BPIALL, Invalidate all branch predictors"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("bpiall").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("bpiall").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 7, 0, 6, 1 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "DCIMVAC, Invalidate data* cache line by MVA to PoC"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("dcimvac").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("dcimvac").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 7, 0, 6, 2 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "DCISW, Invalidate data* cache line by set/way"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("dcisw").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("dcisw").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+          
+    case CP15ENCODE( 7, 0, 10, 1 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "DCCMVAC, Clean data* cache line by MVA to PoC"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("dccmvac").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("dccmvac").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 7, 0, 10, 2 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "DCCSW, Clean data* cache line by set/way"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("dccsw").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("dccsw").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+          
+    case CP15ENCODE( 7, 0, 11, 1 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "DCCMVAU, Clean data* cache line by MVA to PoU"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("dccmvau").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("dccmvau").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 7, 0, 14, 1 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "DCCIMVAC, Clean and invalidate data* cache line by MVA to PoC"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("dccimvac").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("dccimvac").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+          
+      /******************************
+       * TLB maintenance operations *
+       ******************************/
+
+    case CP15ENCODE( 8, 0, 3, 0 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "TLBIALLIS, Invalidate entire TLB Inner Shareable"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("tlbiallis").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("tlbiallis").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 8, 0, 7, 0 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "TLBIALL, invalidate unified TLB"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("tlbiall").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("tlbiall").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+    case CP15ENCODE( 8, 0, 7, 2 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "TLBIASID, invalidate unified TLB by ASID match"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("tlbiasid").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("tlbiasid").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+          
+    case CP15ENCODE( 12, 0, 0, 0 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "VBAR, Vector Base Address Register"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("vbar").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("vbar").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+          
+      /***********************************/
+      /* Context and thread ID registers */
+      /***********************************/
+
+    case CP15ENCODE( 13, 0, 0, 1 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "CONTEXTIDR, Context ID Register"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("contextidr").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("contextidr").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+      /* BOARD specific */
+          
+    case CP15ENCODE( 15, 0, 0, 1 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "DIAGCR, undocumented Diagnostic Control register"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("diagcr").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("diagcr").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+          
+    case CP15ENCODE( 15, 4, 0, 0 ):
+      {
+        static struct : public CP15Reg
+        {
+          char const* Describe() { return "CBAR, Configuration Base Address"; }
+          U32 Read( Processor& proc )
+            { return proc.memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("cbar").code); }
+          void Write( Processor& proc, U32 const& value )
+            { return proc.memoryState->setRegisterValue(RegID("cbar").code, U32(value)); }
+        } x;
+        return x;
+      } break;
+
+    }
+
+  static struct CP15Error : public CP15Reg {
+    char const* Describe() { return "Unknown CP15 register"; }
+  } err;
+  return err;
+}
+
+void
+Processor::PSR::SetBits( U32 const& bits, uint32_t mask )
+{
+  if (NRF().Get(mask))
+    { proc.memoryState->setRegisterValue(RegID("n").code, BOOL( NRF().Get(bits) ));
+      NRF().Set(mask, 0u);
+    }
+  if (ZRF().Get(mask))
+    { proc.memoryState->setRegisterValue(RegID("z").code, BOOL( ZRF().Get(bits) ));
+      ZRF().Set(mask, 0u);
+    }
+  if (CRF().Get(mask))
+    { proc.memoryState->setRegisterValue(RegID("c").code, BOOL( CRF().Get(bits) ));
+      CRF().Set(mask, 0u);
+    }
+  if (VRF().Get(mask))
+    { proc.memoryState->setRegisterValue(RegID("v").code, BOOL( VRF().Get(bits) ));
+      VRF().Set(mask, 0u);
+    }
+        
+  if (ITHIRF().Get(mask) or ITLORF().Get(mask))
+    {
+      SetITState(U8((ITHIRF().Get(bits) << 2) | ITLORF().Get(bits)));
+      uint32_t itmask = ITHIRF().getmask<uint32_t>() | ITLORF().getmask<uint32_t>();
+      if ((mask & itmask) != itmask)
+        throw 0;
+      mask &= ~itmask;
+      ITHIRF().Set(mask, 0u); ITLORF().Set(mask, 0u);
+    }
+        
+  if (MRF().Get(mask))
+    {
+      if (MRF().Get(mask) != 0x1f)
+        throw 0;
+      U32       nmode = MRF().Get(bits);
+      MRF().Set(mask, 0u);
+      if (proc.Test(nmode != U32(mode)))
+        proc.UnpredictableInsnBehaviour();
+    }
+        
+  if (JRF().Get(mask)) { if (proc.Test(JRF().Get(bits) != U32(GetJ())))    { proc.UnpredictableInsnBehaviour(); } JRF().Set(mask, 0u); }
+  if (TRF().Get(mask)) { if (proc.Test(TRF().Get(bits) != U32(GetT())))    { proc.UnpredictableInsnBehaviour(); } TRF().Set(mask, 0u); }
+  if (ERF().Get(mask)) { if (proc.Test(ERF().Get(bits) != U32(bigendian))) { proc.UnpredictableInsnBehaviour(); } ERF().Set(mask, 0u); }
+        
+  U32 bg = GetBits();
+  bg = (bg & U32(~mask)) | (bits & U32(mask));
+  proc.memoryState->setRegisterValue(CPSR_ID, std::move(bg));
+}
 
 struct THUMBISA : public unisim::component::cxx::processor::arm::isa::thumb::Decoder<Processor>
 {

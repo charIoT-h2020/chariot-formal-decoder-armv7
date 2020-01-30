@@ -136,6 +136,8 @@ class MemoryState {
    void write(std::ostream& out) const {}
 };
 
+MemoryModelFunctions MemoryState::functions={};
+
 class MemoryInterpretParameters {
 
 };

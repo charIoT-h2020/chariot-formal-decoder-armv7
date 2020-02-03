@@ -19,6 +19,94 @@ template <> struct StaticAssert<true> { static void check() {}; };
 template <class T, class U>  struct CmpTypes { static bool const same = false; };
 template <class T>  struct CmpTypes<T,T> { static bool const same = true; };
 
+class PathExplorer {
+private:
+  uint64_t auChoice[2] = {};
+  unsigned uCurrentStackPosition = 0;
+  unsigned uLastZeroBit = 0;
+  unsigned uLastIncBit = 0;
+  bool uLastResult = false;
+  bool uLastLogCases = false;
+ 
+  void clearHigh(int bitPosition)
+    { assert(0 <= bitPosition && bitPosition<=2*8*sizeof(uint64_t));
+      if (bitPosition%(8*sizeof(uint64_t)) > 0)
+        auChoice[(bitPosition+8*sizeof(uint64_t)-1)/(8*sizeof(uint64_t))]
+            &= ~(~((uint64_t) 0) << (bitPosition%(8*sizeof(uint64_t))));
+      for (int index = (bitPosition+8*sizeof(uint64_t)-1)/(8*sizeof(uint64_t)); index < 2; ++index)
+        auChoice[index] = 0;
+    }
+
+public:
+  unsigned& currentStackPosition() { return uCurrentStackPosition; }
+  unsigned& lastZeroBit() { return uLastZeroBit; }
+  unsigned& lastIncBit() { return uLastZeroBit; }
+  bool& lastResult() { return uLastResult; }
+  bool& lastLogCases() { return uLastLogCases; }
+
+  bool cbitArray(int bitPosition) const
+    { assert(0 <= bitPosition && bitPosition<2*8*sizeof(uint64_t));
+      return auChoice[(bitPosition+8*sizeof(uint64_t)-1)/(8*sizeof(uint64_t))]
+            & (((uint64_t) 1) << (bitPosition%(8*sizeof(uint64_t))));
+    }
+  void setFalseBitArray(int bitPosition)
+    { assert(0 <= bitPosition && bitPosition<2*8*sizeof(uint64_t));
+      auChoice[(bitPosition+8*sizeof(uint64_t)-1)/(8*sizeof(uint64_t))]
+           &= ~(((uint64_t) 1) << (bitPosition%(8*sizeof(uint64_t))));
+    }
+  void setTrueBitArray(int bitPosition)
+    { assert(0 <= bitPosition && bitPosition<2*8*sizeof(uint64_t));
+      auChoice[(bitPosition+8*sizeof(uint64_t)-1)/(8*sizeof(uint64_t))]
+           |= (((uint64_t) 1) << (bitPosition%(8*sizeof(uint64_t))));
+    }
+  int log_base_2() const
+    { // bsr instruction
+      int result = 0;
+      if (auChoice[1]) {
+        uint64_t val = auChoice[1];
+        result = 8*sizeof(uint64_t)+1;
+        while (val >>= 1)
+          ++result;
+      }
+      else if (auChoice[0]) {
+        uint64_t val = auChoice[0];
+        result = 1;
+        while (val >>= 1)
+          ++result;
+      }
+      return result;
+    }
+
+public:
+  PathExplorer() = default;
+  PathExplorer(const PathExplorer&) = default;
+  PathExplorer& operator=(const PathExplorer&) = default;
+
+  bool close()
+    { if (uLastLogCases /* > 0 */) {
+        assert(uCurrentStackPosition >= (int) uLastLogCases);
+        if (uLastResult == 0) { // pop from last branch/conversion
+          assert(uLastZeroBit == 0 || uLastIncBit < uLastZeroBit);
+          clearHigh(uLastZeroBit);
+          if (uLastZeroBit > 0) {
+            while (cbitArray(uLastIncBit)) {
+              setFalseBitArray(uLastIncBit);
+              ++uLastIncBit;
+            };
+            assert(uLastIncBit < uLastZeroBit);
+            setTrueBitArray(uLastIncBit);
+          };
+        }
+        else /* if (uLastLogCases <= ...)  */ // branch
+          setTrueBitArray(uCurrentStackPosition-1);
+      };
+      uCurrentStackPosition = 0;
+      uLastResult = uLastLogCases = false;
+      uLastZeroBit = uLastIncBit = 0;
+      return auChoice[0] == 0 && auChoice[1] == 0;
+    }
+};
+
 struct ScalarType
 {
   enum id_t { VOID, BOOL, U8, U16, U32, U64, S8, S16, S32, S64, F32, F64 };
@@ -1758,6 +1846,13 @@ public:
         memory.setEvaluationEnvironment(domainEnvironment);
      }
   
+  bool close()
+    {
+      bool result = path.close();
+      doesFollow = !result;
+      return result;
+    }
+
   //   =====================================================================
   //   =                 Internal Instruction Control Flow                 =
   //   =====================================================================
@@ -1768,12 +1863,38 @@ public:
   void UndefinedInstruction( OP* op ) { throw Undefined(); }
     
   bool Test( DomainBitValue const& cond )
-  {
-    bool result;
-    if (!cond.isConstant(&result))
-      throw std::logic_error( "Not a valid condition" );
-    return result;
-  }
+    {
+      bool result;
+      if (cond.isConstant(&result))
+        return result;
+      if (doesFollow) {
+        doesFollow = (path.currentStackPosition() < (int) path.log_base_2() - 1);
+        if (doesFollow) {
+          result = !path.cbitArray(path.currentStackPosition());
+          if (result) {
+            path.lastIncBit() = path.currentStackPosition();
+            path.lastZeroBit() = path.currentStackPosition()+1;
+          }
+        }
+        else {
+          assert(path.cbitArray(path.currentStackPosition()));
+          path.lastLogCases() = 1;
+          path.lastResult() = 0; /* false */
+          // path.setFalseBitArray(path.currentStackPosition());
+          result = false;
+        };
+      }
+      else {
+         path.lastLogCases() = 1;
+         path.lastResult() = 1; /* true */
+         path.lastIncBit() = path.currentStackPosition();
+         path.lastZeroBit() = path.currentStackPosition()+1;
+         // path.setTrueBitArray(path.currentStackPosition());
+         result = true;
+      };
+      ++path.currentStackPosition();
+      return result;
+    }
   
   void FPTrap( unsigned exc )
   {
@@ -2152,6 +2273,8 @@ public:
     U32 val;
     Processor* proc;
   }                FPEXC;
+  PathExplorer     path;
+  bool             doesFollow = false;
   bool             is_it_assigned; /* determines wether current instruction is an IT one. */
   Mode             mode;
   bool             unpredictable;
@@ -2862,10 +2985,6 @@ struct Translator
         encoding &= 0xffff;
     }
     
-    // Disassemble
-    try { instruction->execute( state ); }
-    catch (...) { throw; }
-    
     // Get actions
     bool is_thumb = status.IsThumb();
     for (bool end = false; not end;)
@@ -2878,7 +2997,7 @@ struct Translator
         instruction->execute( state );
         if (is_thumb)
           state.ITAdvance();
-        // end = state.close( reference );
+        end = state.close();
       }
   }
 

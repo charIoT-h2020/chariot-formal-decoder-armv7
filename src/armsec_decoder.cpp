@@ -21,7 +21,7 @@ template <class T>  struct CmpTypes<T,T> { static bool const same = true; };
 
 class PathExplorer {
 private:
-  uint64_t auChoice[2] = {};
+  uint64_t auChoice[2] = {}; // could be unsigned: only 3 bits are useful for armv7
   unsigned uCurrentStackPosition = 0;
   unsigned uLastZeroBit = 0;
   unsigned uLastIncBit = 0;

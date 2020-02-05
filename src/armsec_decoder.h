@@ -58,6 +58,7 @@ extern "C" {
 typedef struct _InterpretParameters InterpretParameters;
 typedef struct _MemoryModel MemoryModel;
 typedef struct _MemoryModelFunctions MemoryModelFunctions;
+struct _Processor;
 
 typedef struct _TargetAddresses {
    uint64_t* addresses;
@@ -69,18 +70,18 @@ typedef struct _TargetAddresses {
    void* address_container;
 } TargetAddresses;
 
-DLL_API void* create_processor();
-DLL_API void set_domain_functions(void* processor, struct _DomainElementFunctions* functionTable);
-DLL_API void initialize_memory(void* processor, MemoryModel* memory,
+DLL_API struct _Processor* create_processor();
+DLL_API void set_domain_functions(struct _Processor* processor, struct _DomainElementFunctions* functionTable);
+DLL_API void initialize_memory(struct _Processor* processor, MemoryModel* memory,
       MemoryModelFunctions* memory_functions, InterpretParameters* parameters);
-DLL_API void free_processor(void* processor);
+DLL_API void free_processor(struct _Processor* processor);
 
-DLL_API bool armsec_next_targets(void* processor, char* instruction_buffer,
+DLL_API bool armsec_next_targets(struct _Processor* processor, char* instruction_buffer,
       size_t buffer_size, uint64_t address, TargetAddresses target_addresses,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,
       InterpretParameters* parameters);
 
-DLL_API bool armsec_interpret(void* processor, char* instruction_buffer,
+DLL_API bool armsec_interpret(struct _Processor* processor, char* instruction_buffer,
       size_t buffer_size, uint64_t address, uint64_t target_address,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,
       InterpretParameters* parameters);

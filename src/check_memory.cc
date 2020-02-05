@@ -443,24 +443,24 @@ MemoryModelFunctions MemoryState::functions={
 
 class Processor {
   private:
-   void* pvContent;
+   struct _Processor* pvContent;
    friend class MemoryState;
 
    static uint64_t* reallocAddresses(uint64_t* old_addresses, int old_size,
          int* new_size, void* address_container)
       {  auto* container = reinterpret_cast<std::vector<uint64_t>*>(address_container);
          assert(container->size() == (size_t) old_size
-               && *old_addresses == (*container)[0]);
+               && old_addresses == &(*container)[0]);
          if (old_size < 6)
             *new_size = 6;
          else
             *new_size = old_size*3/2;
          container->insert(container->end(), (*new_size-old_size), 0);
-         *old_addresses == (*container)[0];
+         return &(*container)[0];
       }
 
   public:
-   Processor(void* content) : pvContent(content) {}
+   Processor(struct _Processor* content) : pvContent(content) {}
    Processor(Processor&& source) : pvContent(source.pvContent)
       {  source.pvContent = nullptr; }
    ~Processor() { free_processor(pvContent); }

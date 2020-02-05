@@ -3062,15 +3062,15 @@ struct Translator
   
 extern "C" {
 
-DLL_API void* create_processor()
-{  return new Processor(); }
+DLL_API struct _Processor* create_processor()
+{  return reinterpret_cast<struct _Processor*>(new Processor()); }
 
-DLL_API void set_domain_functions(void* aprocessor, struct _DomainElementFunctions* functionTable)
+DLL_API void set_domain_functions(struct _Processor* aprocessor, struct _DomainElementFunctions* functionTable)
 {  auto* processor = reinterpret_cast<Processor*>(aprocessor);
    processor->setDomainFunctions(*functionTable);
 }
 
-DLL_API void initialize_memory(void* aprocessor, MemoryModel* memory,
+DLL_API void initialize_memory(struct _Processor* aprocessor, MemoryModel* memory,
       MemoryModelFunctions* memory_functions, InterpretParameters* parameters)
 {  auto* processor = reinterpret_cast<Processor*>(aprocessor);
    MemoryState memoryState(memory, memory_functions, parameters);
@@ -3078,10 +3078,10 @@ DLL_API void initialize_memory(void* aprocessor, MemoryModel* memory,
 }
 
 
-DLL_API void free_processor(void* processor)
+DLL_API void free_processor(struct _Processor* processor)
 {  delete reinterpret_cast<Processor*>(processor); }
 
-DLL_API bool armsec_next_targets(void* processor, char* instruction_buffer,
+DLL_API bool armsec_next_targets(struct _Processor* processor, char* instruction_buffer,
       size_t buffer_size, uint64_t address, TargetAddresses target_addresses,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,
       InterpretParameters* parameters) {
@@ -3102,7 +3102,7 @@ DLL_API bool armsec_next_targets(void* processor, char* instruction_buffer,
   return true;
 }
 
-DLL_API bool armsec_interpret(void* processor, char* instruction_buffer,
+DLL_API bool armsec_interpret(struct _Processor* processor, char* instruction_buffer,
       size_t buffer_size, uint64_t address, uint64_t target_address,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,
       InterpretParameters* parameters) {

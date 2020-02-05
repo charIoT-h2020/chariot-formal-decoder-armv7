@@ -112,5 +112,12 @@ mnemonic.
 
 # demo of the API
 
-not yet available
+The command
+
+```sh
+./check_memory -dom .../libScalarInterface.so .../modbus.nobug.bin 170a memory.json
+```
+
+should load the registers and interpret the binary instructions of the linear
+bloc, starting at offset `170a`.
 

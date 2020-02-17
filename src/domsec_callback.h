@@ -53,7 +53,8 @@ typedef enum _DomainBitCompareOperation
 
 typedef enum _DomainMultiBitUnaryOperation 
 {  DMBUOUndefined, DMBUOPrevSigned, DMBUOPrevUnsigned, DMBUONextSigned,
-   DMBUONextUnsigned, DMBUOBitNegate, DMBUOOppositeSigned, DMBUOOppositeFloat
+   DMBUONextUnsigned, DMBUOBitNegate, DMBUOOppositeSigned, DMBUOOppositeFloat,
+   DMBUOBitScanReverse
 } DomainMultiBitUnaryOperation;
 
 typedef enum _DomainMultiBitExtendType {
@@ -107,26 +108,30 @@ typedef enum _DomainMultiFloatUnaryOperation
 {
    DMFUOUndefined, DMFUOCastFloat, DMFUOCastDouble, DMFUOOpposite, DMFUOAbs,
    DMFUOAcos, DMFUOAsin, DMFUOAtan, DMFUOCeil, DMFUOCos, DMFUOCosh, DMFUOExp, DMFUOFabs, DMFUOFloor,
-      DMFUOLog, DMFUOLog10, DMFUOPow, DMFUOSin, DMFUOSinh, DMFUOSqrt, DMFUOTan, DMFUOTanh
+      DMFUOLog, DMFUOLog10, DMFUOSin, DMFUOSinh, DMFUOSqrt, DMFUOTan, DMFUOTanh,
+   DMFUOSetToNaN, DMFUOSetQuietBit
 } DomainMultiFloatUnaryOperation;
 
 typedef enum _DomainMultiFloatBinaryOperation
 {
    DMFBOUndefined, DMFBOPlus, DMFBOMinus, DMFBOMin, DMFBOMax, DMFBOTimes, DMFBODivide,
-   DMFBOAtan2, DMFBOFmod, DMFBOFrexp, DMFBOLdexp, DMFBOModf
+   DMFBOPow, DMFBOAtan2, DMFBOFmod, DMFBOFrexp, DMFBOLdexp, DMFBOModf
 } DomainMultiFloatBinaryOperation;
 
 typedef enum _DomainMultiFloatCompareOperation
 {
    DMFCOUndefined, DMFCOCompareLess, DMFCOCompareLessOrEqual, DMFCOCompareEqual, DMFCOCompareDifferent,
       DMFCOCompareGreaterOrEqual, DMFCOCompareGreater,
-   DMFCOMultAdd, DMFCOMultSub, DMFCONegMultAdd, DMFCONegMultSub,
 } DomainMultiFloatCompareOperation;
 
 typedef enum _DomainMultiFloatTernaryOperation
 {
    DMFTOUndefined, DMFTOMultAdd, DMFTOMultSub, DMFTONegMultAdd, DMFTONegMultSub
 } DomainMultiFloatTernaryOperation;
+
+typedef enum _DomainMultiFloatQueryOperation
+{  DMFTQUndefined, DMFTQIsInvalid
+} DomainMultiFloatQueryOperation;
 
 typedef enum _DomainEvaluationError
 {  DEENoError=0, DEEPositiveOverflow=1<<1, DEENegativeOverflow=1<<2,
@@ -228,6 +233,8 @@ struct _DomainElementFunctions {
       DomainEvaluationEnvironment* env);
   DomainBitElement (*multibit_create_cast_shift_bit)(DomainMultiBitElement multibitDomain,
       int shift, DomainEvaluationEnvironment* env);
+  DomainMultiBitElement (*multibit_create_cast_multibit)(DomainMultiBitElement multibitSource,
+        int destinationSizeInBits, bool isSigned, DomainEvaluationEnvironment* env);
   DomainMultiFloatElement (*multibit_create_cast_multifloat)(
       DomainMultiBitElement multibitDomain, int sizeInBits, bool isSigned,
       DomainEvaluationEnvironment* env);
@@ -320,6 +327,8 @@ struct _DomainElementFunctions {
   DomainMultiFloatElement (*multifloat_create_unary_apply)(
       DomainMultiFloatElement element, DomainMultiFloatUnaryOperation operation,
       DomainEvaluationEnvironment* env);
+  DomainBitElement (*multifloat_flush_to_zero)(
+      DomainMultiFloatElement* element, DomainEvaluationEnvironment* env);
   bool (*multifloat_binary_apply_assign)(DomainMultiFloatElement* element,
       DomainMultiFloatBinaryOperation operation, DomainMultiFloatElement source,
       DomainEvaluationEnvironment* env);
@@ -332,12 +341,17 @@ struct _DomainElementFunctions {
   DomainBitElement (*multifloat_binary_compare_domain)(DomainMultiFloatElement element,
       DomainMultiFloatCompareOperation operation, DomainMultiFloatElement source,
       DomainEvaluationEnvironment* env);
+  DomainMultiBitElement (*multifloat_binary_full_compare_domain)(DomainMultiFloatElement element,
+      DomainMultiFloatElement source, DomainEvaluationEnvironment* env);
   DomainMultiFloatElement (*multifloat_guard_assign)(DomainBitElement* condition,
       DomainMultiFloatElement* first, DomainMultiFloatElement* second,
       DomainEvaluationEnvironment* env);
   bool (*multifloat_ternary_apply_assign)(DomainMultiFloatElement* element,
       DomainMultiFloatTernaryOperation operation, DomainMultiFloatElement second,
       DomainMultiFloatElement third, DomainEvaluationEnvironment* env);
+  DomainBitElement (*multifloat_ternary_query)(
+      DomainMultiFloatElement multifloatDomain, DomainMultiFloatQueryOperation operation,
+      DomainMultiFloatElement first, DomainMultiFloatElement second, DomainEvaluationEnvironment* env);
   DomainMultiFloatElement (*multifloat_create_ternary_apply)(
       DomainMultiFloatElement element, DomainMultiFloatTernaryOperation operation,
       DomainMultiFloatElement second, DomainMultiFloatElement third,

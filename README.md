@@ -30,6 +30,32 @@ make
 # make -j 8
 ```
 
+# build armsec\_decoder.so
+
+`armsec` should have been previously built to generate the files
+`armsec/build_release/armsec/top_thumb.hh` and
+`armsec/build_release/armsec/top_thumb.cc`.
+
+You need to go in the `src` directory. Then you need to create a
+sub-directory `armsec` that contains the previously generated files:
+
+```sh
+mkdir -p armsec
+ln -s ../armsec/build_release/armsec/top_thumb.hh armsec/top_thumb.hh
+ln -s ../armsec/build_release/armsec/top_thumb.cc armsec/top_thumb.cc
+```
+
+Then the command
+
+```sh
+make
+```
+
+creates the dynamic library `armsec_decoder.so` whose API is
+`armsec_decoder.h`. The test `check_memory` uses this API as
+a proof of concept for propagating a memory model over arm
+instructions.
+
 # demo of armsec
 
 You can use the armv7 `objdump` utility to compare the mnemonic of the
@@ -86,5 +112,12 @@ mnemonic.
 
 # demo of the API
 
-not yet available
+The command
+
+```sh
+./check_memory -dom .../libScalarInterface.so .../modbus.nobug.bin 170a memory.json
+```
+
+should load the registers and interpret the binary instructions of the linear
+bloc, starting at offset `170a`.
 

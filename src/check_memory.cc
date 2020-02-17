@@ -479,16 +479,17 @@ class Processor {
          argument.realloc_addresses = &reallocAddresses;
          argument.address_container = &result;
          MemoryState memory(memoryState);
-         bool isValid = armsec_next_targets(pvContent, nextInstruction, length, address,
-               argument, reinterpret_cast<MemoryModel*>(&memory), memory.getFunctions(),
+         bool isValid = processor_next_targets(pvContent, nextInstruction, length, address,
+               &argument, reinterpret_cast<MemoryModel*>(&memory), memory.getFunctions(),
                reinterpret_cast<InterpretParameters*>(&parameters));
          assert(isValid);
+         result.resize(argument.addresses_length);
          return std::move(result);
       }
 
    void interpret(char* instruction, int length, uint64_t address,
          uint64_t targetAddress, MemoryState& memoryState, MemoryInterpretParameters& parameters)
-      {  bool isValid = armsec_interpret(pvContent, instruction, length, address, targetAddress,
+      {  bool isValid = processor_interpret(pvContent, instruction, length, address, targetAddress,
                reinterpret_cast<MemoryModel*>(&memoryState), memoryState.getFunctions(),
                reinterpret_cast<InterpretParameters*>(&parameters));
          assert(isValid);

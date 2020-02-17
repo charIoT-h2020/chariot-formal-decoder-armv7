@@ -3001,7 +3001,7 @@ struct Translator
       }
   }
 
-  void next_targets(Processor& proc)
+  void next_targets(Processor& proc, TargetAddresses& targets)
   {
     try
       {
@@ -3081,8 +3081,8 @@ DLL_API void initialize_memory(struct _Processor* aprocessor, MemoryModel* memor
 DLL_API void free_processor(struct _Processor* processor)
 {  delete reinterpret_cast<Processor*>(processor); }
 
-DLL_API bool armsec_next_targets(struct _Processor* processor, char* instruction_buffer,
-      size_t buffer_size, uint64_t address, TargetAddresses target_addresses,
+DLL_API bool processor_next_targets(struct _Processor* processor, char* instruction_buffer,
+      size_t buffer_size, uint64_t address, TargetAddresses* target_addresses,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,
       InterpretParameters* parameters) {
   Processor* proc = reinterpret_cast<Processor*>(processor);
@@ -3098,11 +3098,11 @@ DLL_API bool armsec_next_targets(struct _Processor* processor, char* instruction
   Translator actset( address, code );
   Processor::StatusRegister& status = actset.status;
   status.iset = status.Thumb;
-  actset.next_targets(*proc);
+  actset.next_targets(*proc, *target_addresses);
   return true;
 }
 
-DLL_API bool armsec_interpret(struct _Processor* processor, char* instruction_buffer,
+DLL_API bool processor_interpret(struct _Processor* processor, char* instruction_buffer,
       size_t buffer_size, uint64_t address, uint64_t target_address,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,
       InterpretParameters* parameters) {

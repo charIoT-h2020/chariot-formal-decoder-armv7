@@ -76,12 +76,12 @@ DLL_API void initialize_memory(struct _Processor* processor, MemoryModel* memory
       MemoryModelFunctions* memory_functions, InterpretParameters* parameters);
 DLL_API void free_processor(struct _Processor* processor);
 
-DLL_API bool armsec_next_targets(struct _Processor* processor, char* instruction_buffer,
-      size_t buffer_size, uint64_t address, TargetAddresses target_addresses,
+DLL_API bool processor_next_targets(struct _Processor* processor, char* instruction_buffer,
+      size_t buffer_size, uint64_t address, TargetAddresses* target_addresses,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,
       InterpretParameters* parameters);
 
-DLL_API bool armsec_interpret(struct _Processor* processor, char* instruction_buffer,
+DLL_API bool processor_interpret(struct _Processor* processor, char* instruction_buffer,
       size_t buffer_size, uint64_t address, uint64_t target_address,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,
       InterpretParameters* parameters);

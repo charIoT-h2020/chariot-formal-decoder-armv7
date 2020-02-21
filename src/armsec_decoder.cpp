@@ -3081,6 +3081,28 @@ DLL_API void initialize_memory(struct _Processor* aprocessor, MemoryModel* memor
 DLL_API void free_processor(struct _Processor* processor)
 {  delete reinterpret_cast<Processor*>(processor); }
 
+DLL_API int processor_get_register_index(struct _Processor* processor,
+      const char* name)
+{  int code = Processor::RegID(name).code;
+   if (code == Processor::RegID::end) {
+      code = Processor::SRegID(name).code;
+      if (code == Processor::SRegID::end)
+         return -1;
+      return Processor::RegID::end + code;
+   }
+   return code;
+}
+  
+DLL_API const char* processor_get_register_name(struct _Processor* processor,
+      int register_index)
+{  if (register_index < 0)
+      return nullptr;
+   if (register_index >= Processor::RegID::end)
+      return Processor::SRegID((Processor::SRegID::Code)
+            (register_index-Processor::RegID::end)).c_str();
+   return Processor::RegID((Processor::RegID::Code) register_index).c_str();
+}
+  
 DLL_API bool processor_next_targets(struct _Processor* processor, char* instruction_buffer,
       size_t buffer_size, uint64_t address, TargetAddresses* target_addresses,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,

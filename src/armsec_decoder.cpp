@@ -166,10 +166,10 @@ public:
   const DomainElement& value() const { return deValue; }
 
 public:
-  DomainValue() : pfFunctions(nullptr), peEnv(nullptr) {}
+  DomainValue() : deValue{ nullptr }, pfFunctions(nullptr), peEnv(nullptr) {}
   class Empty {};
   DomainValue(Empty, const DomainValue& ref)
-    : deValue(DomainBitElement{}), pfFunctions(ref.pfFunctions), peEnv(ref.peEnv) {}
+    : deValue{ nullptr }, pfFunctions(ref.pfFunctions), peEnv(ref.peEnv) {}
   DomainValue(DomainElement&& value, struct _DomainElementFunctions* functions, DomainEvaluationEnvironment* env)
     : deValue(std::move(value)), pfFunctions(functions), peEnv(env) {}
   DomainValue(Processor& processor);
@@ -1912,14 +1912,14 @@ public:
   
   // TODO: interworking branches are not correctly handled
   void addJumpTargetAddress(uint32_t val)
-    {  if (target_addresses.addresses_length >= target_addresses.addresses_array_size) {
+    {  if (target_addresses.addresses_length+1 >= target_addresses.addresses_array_size) {
           int old_size = target_addresses.addresses_array_size;
           target_addresses.addresses = (*target_addresses.realloc_addresses)(
              target_addresses.addresses, old_size,
              &target_addresses.addresses_array_size,
              target_addresses.address_container);
        }
-       target_addresses.addresses[target_addresses.addresses_length-1] = val;
+       target_addresses.addresses[target_addresses.addresses_length] = val;
        ++target_addresses.addresses_length;
     }
   void addCallTargetAddress(uint32_t val)
@@ -2991,7 +2991,7 @@ struct Translator
       {
         // Fetch
         uint32_t insn_addr = instruction->GetAddr();
-        // state.SetNIA( Processor::U32(insn_addr + instruction.bytecount), Processor::B_JMP );
+        state.SetNIA( Processor::U32(insn_addr + instruction.bytecount), Processor::B_JMP );
         // state.reg_values[15] = Processor::U32(insn_addr + (is_thumb ? 4 : 8) );
         // Execute
         instruction->execute( state );
@@ -3014,7 +3014,11 @@ struct Translator
         else if (status.iset == status.Thumb)
           {
             THUMBISA thumbisa;
+            proc.next_targets_queries = true;
+            proc.target_addresses = targets;
             extract( thumbisa, proc );
+            targets = proc.target_addresses;
+            proc.next_targets_queries = false;
           }
         else
           throw 0;
@@ -3068,6 +3072,12 @@ DLL_API struct _Processor* create_processor()
 DLL_API void set_domain_functions(struct _Processor* aprocessor, struct _DomainElementFunctions* functionTable)
 {  auto* processor = reinterpret_cast<Processor*>(aprocessor);
    processor->setDomainFunctions(*functionTable);
+}
+
+DLL_API struct _DomainElementFunctions* get_domain_functions(
+      struct _Processor* aprocessor)
+{  auto* processor = reinterpret_cast<Processor*>(aprocessor);
+   return &processor->getDomainFunctions();
 }
 
 DLL_API void initialize_memory(struct _Processor* aprocessor, MemoryModel* memory,

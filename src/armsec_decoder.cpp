@@ -245,7 +245,34 @@ public:
       assert(pfFunctions);
       return (*pfFunctions->get_size_in_bits)(deValue);
     } 
+   friend char* debugPrint(const DomainValue* value);
 };
+
+static char*
+increase_vector_char_buffer_size(char* buffer, int old_length, int new_length, void* awriter)
+{  std::vector<char>* writer = reinterpret_cast<std::vector<char>*>(awriter);
+   assert(&(*writer)[0] == buffer && writer->size() == old_length);
+   writer->insert(writer->end(), new_length-old_length, '\0');
+   return &(*writer)[0];
+}
+
+char* debugPrint(const DomainValue* value)
+{  static std::vector<char> buffer;
+   buffer.clear();
+   if (!value || !value->deValue.content || !value->pfFunctions) {
+      buffer.insert(buffer.begin(), 3, '.');
+      buffer.push_back('\0');
+   }
+   else {
+      buffer.insert(buffer.begin(), 40, '\0');
+      int buffer_size = 40;
+      int length = 0;
+      (*value->pfFunctions->write)(value->deValue, &buffer[0], buffer_size, &length, &buffer,
+            &increase_vector_char_buffer_size);
+      buffer.resize(length+1);
+   }
+   return &buffer[0];
+}
 
 // extern DomainValue getRootDomainValue();
 
@@ -1610,14 +1637,25 @@ struct Processor
     }
       
     void   SetBits( U32 const& bits, uint32_t mask );
-    U32    GetBits() { return U32(proc.memoryState->getRegisterValueAsElement(CPSR_ID), proc); }
+    U32    GetBits() const { return U32(proc.memoryState->getRegisterValueAsElement(CPSR_ID), proc); }
     // BOOL   n() const { return proc.memoryState->getRegisterValueAsBit(RegID("n").code); }
     // BOOL   z() const { return proc.memoryState->getRegisterValueAsBit(RegID("z").code); }
     // BOOL   c() const { return proc.memoryState->getRegisterValueAsBit(RegID("c").code); }
     // BOOL   v() const { return proc.memoryState->getRegisterValueAsBit(RegID("v").code); }
     U8     GetITState() const
-      { return outitb ? U8(0) : U8(proc.memoryState->getRegisterValueAsElement(RegID("itstate").code), proc); }
-    
+    { 
+      U8 result(0);
+      if (!outitb) {
+        U32 reg = GetBits();
+        U32 res = reg;
+        res.reduce(ITLORF::pos, ITLORF::pos+ITLORF::size-1);
+        res.extendWithZero(ITHIRF::size);
+        reg.reduce(ITHIRF::pos, ITHIRF::pos+ITHIRF::size-1);
+        res.bitset(ITLORF::size, ITLORF::size+ITHIRF::size-1, reg);
+        result = std::move(*static_cast<U8*>(static_cast<DomainValue*>(&res)));
+      }
+      return result;
+    }
     void   Set( ERF const& _, const U32& value ) { if (proc.Test(value != U32(bigendian))) proc.UnpredictableInsnBehaviour(); }
     void   SetITState( uint8_t init_val, Processor& p )
        { this->Set(ITLORF(), U32(init_val));
@@ -1724,7 +1762,7 @@ public:
       {
         NA = 0,
         r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, sl, fp, ip, sp, lr,
-        n, z, c, v, itstate, // q, ge0, ge1, ge2, ge3,
+        n, z, c, v, // q, ge0, ge1, ge2, ge3,
         cpsr, spsr,
         fpscr, fpexc,
         r8_fiq,
@@ -1777,7 +1815,6 @@ public:
         case          z: return "z";
         case          c: return "c";
         case          v: return "v";
-        case    itstate: return "itstate";
         case       cpsr: return "cpsr";
         case       spsr: return "spsr";
         case      fpscr: return "fpscr";
@@ -1912,7 +1949,7 @@ public:
   
   // TODO: interworking branches are not correctly handled
   void addJumpTargetAddress(uint32_t val)
-    {  if (target_addresses.addresses_length+1 >= target_addresses.addresses_array_size) {
+    {  if (target_addresses.addresses_length >= target_addresses.addresses_array_size) {
           int old_size = target_addresses.addresses_array_size;
           target_addresses.addresses = (*target_addresses.realloc_addresses)(
              target_addresses.addresses, old_size,
@@ -3067,7 +3104,9 @@ struct Translator
 extern "C" {
 
 DLL_API struct _Processor* create_processor()
-{  return reinterpret_cast<struct _Processor*>(new Processor()); }
+{  debugPrint((DomainValue*) nullptr);
+   return reinterpret_cast<struct _Processor*>(new Processor());
+}
 
 DLL_API void set_domain_functions(struct _Processor* aprocessor, struct _DomainElementFunctions* functionTable)
 {  auto* processor = reinterpret_cast<Processor*>(aprocessor);

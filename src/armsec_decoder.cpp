@@ -1762,7 +1762,7 @@ public:
       {
         NA = 0,
         r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, sl, fp, ip, sp, lr,
-        n, z, c, v, // q, ge0, ge1, ge2, ge3,
+        // n, z, c, v, // q, ge0, ge1, ge2, ge3,
         cpsr, spsr,
         fpscr, fpexc,
         r8_fiq,
@@ -1811,10 +1811,10 @@ public:
         case         ip: return "ip";
         case         sp: return "sp";
         case         lr: return "lr";
-        case          n: return "n";
-        case          z: return "z";
-        case          c: return "c";
-        case          v: return "v";
+        // case          n: return "n";
+        // case          z: return "z";
+        // case          c: return "c";
+        // case          v: return "v";
         case       cpsr: return "cpsr";
         case       spsr: return "spsr";
         case      fpscr: return "fpscr";
@@ -1874,6 +1874,7 @@ public:
 
   void setMemoryFunctions(struct _MemoryModelFunctions& functions) { memoryFunctions = functions; }
   void setDomainFunctions(struct _DomainElementFunctions& functions) { domainFunctions = functions; }
+  void setVerbose() { is_verbose = true; }
   struct _DomainElementFunctions& getDomainFunctions() { return domainFunctions; }
   void setInterpretParameters(InterpretParameters& params) { interpretParameters = &params; }
   void setMemoryState(MemoryState& memory)
@@ -2317,6 +2318,7 @@ public:
   bool             unpredictable;
   bool             next_targets_queries;
   TargetAddresses  target_addresses;
+  bool             is_verbose = false;
 };
 
 inline
@@ -2931,32 +2933,32 @@ Processor::CP15GetRegister( uint8_t crn, uint8_t opcode1, uint8_t crm, uint8_t o
 void
 Processor::PSR::SetBits( U32 const& bits, uint32_t mask )
 {
-  if (NRF().Get(mask))
-    { proc.memoryState->setRegisterValue(RegID("n").code, BOOL( NRF().Get(bits) ).castToMultiBit<char, 1>(), proc.domainFunctions);
-      NRF().Set(mask, 0u);
-    }
-  if (ZRF().Get(mask))
-    { proc.memoryState->setRegisterValue(RegID("z").code, BOOL( ZRF().Get(bits) ).castToMultiBit<char, 1>(), proc.domainFunctions);
-      ZRF().Set(mask, 0u);
-    }
-  if (CRF().Get(mask))
-    { proc.memoryState->setRegisterValue(RegID("c").code, BOOL( CRF().Get(bits) ).castToMultiBit<char, 1>(), proc.domainFunctions);
-      CRF().Set(mask, 0u);
-    }
-  if (VRF().Get(mask))
-    { proc.memoryState->setRegisterValue(RegID("v").code, BOOL( VRF().Get(bits) ).castToMultiBit<char, 1>(), proc.domainFunctions);
-      VRF().Set(mask, 0u);
-    }
+  // if (NRF().Get(mask))
+  //   { proc.memoryState->setRegisterValue(RegID("n").code, BOOL( NRF().Get(bits) ).castToMultiBit<char, 1>(), proc.domainFunctions);
+  //     NRF().Set(mask, 0u);
+  //   }
+  // if (ZRF().Get(mask))
+  //   { proc.memoryState->setRegisterValue(RegID("z").code, BOOL( ZRF().Get(bits) ).castToMultiBit<char, 1>(), proc.domainFunctions);
+  //     ZRF().Set(mask, 0u);
+  //   }
+  // if (CRF().Get(mask))
+  //   { proc.memoryState->setRegisterValue(RegID("c").code, BOOL( CRF().Get(bits) ).castToMultiBit<char, 1>(), proc.domainFunctions);
+  //     CRF().Set(mask, 0u);
+  //   }
+  // if (VRF().Get(mask))
+  //   { proc.memoryState->setRegisterValue(RegID("v").code, BOOL( VRF().Get(bits) ).castToMultiBit<char, 1>(), proc.domainFunctions);
+  //     VRF().Set(mask, 0u);
+  //   }
         
-  if (ITHIRF().Get(mask) or ITLORF().Get(mask))
-    {
-      SetITState(U8((ITHIRF().Get(bits) << 2) | ITLORF().Get(bits)));
-      uint32_t itmask = ITHIRF().getmask<uint32_t>() | ITLORF().getmask<uint32_t>();
-      if ((mask & itmask) != itmask)
-        throw 0;
-      mask &= ~itmask;
-      ITHIRF().Set(mask, 0u); ITLORF().Set(mask, 0u);
-    }
+  // if (ITHIRF().Get(mask) or ITLORF().Get(mask))
+  //   {
+  //     SetITState(U8((ITHIRF().Get(bits) << 2) | ITLORF().Get(bits)));
+  //     uint32_t itmask = ITHIRF().getmask<uint32_t>() | ITLORF().getmask<uint32_t>();
+  //     if ((mask & itmask) != itmask)
+  //       throw 0;
+  //     mask &= ~itmask;
+  //     ITHIRF().Set(mask, 0u); ITLORF().Set(mask, 0u);
+  //   }
         
   if (MRF().Get(mask))
     {
@@ -3024,6 +3026,11 @@ struct Translator
     
     // Get actions
     bool is_thumb = status.IsThumb();
+    if (state.is_verbose) {
+      std::cout << "\texecute instruction 0x" << std::hex << instruction->GetAddr() << std::dec << ':';
+      instruction->disasm(state, std::cout);
+      std::cout << '\n';
+    };
     for (bool end = false; not end;)
       {
         // Fetch
@@ -3126,6 +3133,8 @@ DLL_API void initialize_memory(struct _Processor* aprocessor, MemoryModel* memor
    memoryState.initializeThumbMemory(processor->getDomainFunctions());
 }
 
+DLL_API void processor_set_verbose(struct _Processor* processor)
+{  if (processor) reinterpret_cast<Processor*>(processor)->setVerbose(); }
 
 DLL_API void free_processor(struct _Processor* processor)
 {  delete reinterpret_cast<Processor*>(processor); }

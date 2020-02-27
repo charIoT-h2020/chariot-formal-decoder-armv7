@@ -75,6 +75,7 @@ DLL_API void set_domain_functions(struct _Processor* processor, struct _DomainEl
 DLL_API struct _DomainElementFunctions* get_domain_functions(struct _Processor* aprocessor);
 DLL_API void initialize_memory(struct _Processor* processor, MemoryModel* memory,
       MemoryModelFunctions* memory_functions, InterpretParameters* parameters);
+DLL_API void processor_set_verbose(struct _Processor* processor);
 DLL_API void free_processor(struct _Processor* processor);
 
 DLL_API int processor_get_register_index(struct _Processor* processor,

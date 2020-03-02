@@ -205,6 +205,16 @@ class DomainValue {
       {  assert(pfFunctions);
          return (*pfFunctions->get_size_in_bits)(deValue);
       } 
+   bool isTop() const
+      {  assert(pfFunctions);
+         return (*pfFunctions->is_top)(deValue);
+      } 
+   void mergeWith(const DomainValue& source)
+      {  assert(pfFunctions);
+         DomainEvaluationEnvironment env{};
+         env.defaultDomainType = DISFormal;
+         (*pfFunctions->merge)(&deValue, source.deValue, &env);
+      } 
    DomainElement extractElement()
       {  auto res = deValue;
          deValue = DomainElement{};
@@ -250,6 +260,29 @@ class MemoryState {
    static void set_number_of_registers(MemoryModel* amemory, int numbers)
       {  MemoryState* memory = reinterpret_cast<MemoryState*>(amemory);
          memory->uRegisterNumber = numbers;
+      }
+   static MemoryModel* clone(MemoryModel* amemory)
+      {  MemoryState* memory = reinterpret_cast<MemoryState*>(amemory);
+         return reinterpret_cast<MemoryModel*>(new MemoryState(*memory));
+      }
+   static void assign(MemoryModel* afirst, MemoryModel* asecond)
+      {  MemoryState* first = reinterpret_cast<MemoryState*>(afirst);
+         MemoryState* second = reinterpret_cast<MemoryState*>(asecond);
+         *first = *second;
+      }
+   static void swap(MemoryModel* afirst, MemoryModel* asecond)
+      {  MemoryState* first = reinterpret_cast<MemoryState*>(afirst);
+         MemoryState* second = reinterpret_cast<MemoryState*>(asecond);
+         first->swap(*second);
+      }
+   static void free(MemoryModel* amemory)
+      {  MemoryState* memory = reinterpret_cast<MemoryState*>(amemory);
+         delete memory;
+      }
+   static void merge(MemoryModel* afirst, MemoryModel* asecond)
+      {  MemoryState* first = reinterpret_cast<MemoryState*>(afirst);
+         MemoryState* second = reinterpret_cast<MemoryState*>(asecond);
+         first->mergeWith(*second);
       }
    static void set_register_value(MemoryModel* amemory, int registerIndex,
          DomainElement* avalue, InterpretParameters* parameters,
@@ -324,7 +357,39 @@ class MemoryState {
   public:
    MemoryState() = default;
    MemoryState(const MemoryState&) = default;
-
+   MemoryState& operator=(const MemoryState&) = default;
+   void swap(MemoryState& source)
+      {  assert(uRegisterNumber == source.uRegisterNumber);
+         mvRegisters.swap(source.mvRegisters);
+      }
+   void mergeWith(const MemoryState& source)
+      {  assert(uRegisterNumber == source.uRegisterNumber);
+         std::map<int, DomainValue>::iterator thisIter = mvRegisters.begin(),
+               thisIterEnd = mvRegisters.end();
+         std::map<int, DomainValue>::const_iterator sourceIter = source.mvRegisters.begin(),
+               sourceIterEnd = source.mvRegisters.end();
+         while (thisIter != thisIterEnd) {
+            if (sourceIter == sourceIterEnd) {
+               auto copyIter = thisIter;
+               ++thisIter;
+               mvRegisters.erase(copyIter);
+            }
+            else {
+               if (thisIter->first < sourceIter->first) {
+                  auto copyIter = thisIter;
+                  ++thisIter;
+                  mvRegisters.erase(copyIter);
+               }
+               else if (sourceIter->first < thisIter->first)
+                  ++sourceIter;
+               else {
+                  thisIter->second.mergeWith(sourceIter->second);
+                  ++thisIter;
+                  ++sourceIter;
+               }
+            };
+         };
+      }
    MemoryModelFunctions* getFunctions() const { return &functions; }
    bool loadDomain(const char* domainFile);
    void write(std::ostream& out) const { out << "end of memory description\n"; }
@@ -338,6 +403,7 @@ MemoryState::loadDomain(const char* domainFile)
    dlDomainLibrary->loadSymbol("domain_get_type", &domainFunctions.get_type);
    dlDomainLibrary->loadSymbol("domain_query_zero_result", &domainFunctions.query_zero_result);
    dlDomainLibrary->loadSymbol("domain_get_size_in_bits", &domainFunctions.get_size_in_bits);
+   dlDomainLibrary->loadSymbol("domain_is_top", &domainFunctions.is_top);
    dlDomainLibrary->loadSymbol("domain_free", &domainFunctions.free);
    dlDomainLibrary->loadSymbol("domain_clone", &domainFunctions.clone);
 
@@ -432,6 +498,11 @@ MemoryState::loadDomain(const char* domainFile)
 
 MemoryModelFunctions MemoryState::functions={
    &MemoryState::set_number_of_registers,
+   &MemoryState::clone,
+   &MemoryState::assign,
+   &MemoryState::swap,
+   &MemoryState::free,
+   &MemoryState::merge,
    &MemoryState::set_register_value,
    &MemoryState::get_register_value,
    &MemoryState::load_multibit_value,
@@ -440,6 +511,22 @@ MemoryModelFunctions MemoryState::functions={
    &MemoryState::store_value,
    nullptr /* &MemoryState::constraint_store_value */,
    nullptr /* &MemoryState::constraint_address */
+};
+
+class DecisionVector {
+  private:
+   struct _DecisionVector* pvContent;
+
+  public:
+   DecisionVector(struct _DecisionVector* content) : pvContent(content) {}
+   DecisionVector(DecisionVector&& source)
+      : pvContent(source.pvContent) { source.pvContent = nullptr; }
+   DecisionVector(const DecisionVector& source)
+      : pvContent(processor_clone_decision_vector(source.pvContent)) {}
+   ~DecisionVector() { if (pvContent) { processor_free_decision_vector(pvContent); pvContent = nullptr; } }
+   void filter(uint64_t address)
+      {  processor_filter_decision_vector(pvContent, address); }
+   struct _DecisionVector* getContent() const { return pvContent; }
 };
 
 class Processor {
@@ -466,10 +553,12 @@ class Processor {
       {  source.pvContent = nullptr; }
    ~Processor() { free_processor(pvContent); }
 
+   DecisionVector createDecisionVector() const { return DecisionVector(processor_create_decision_vector(pvContent)); }
    void setDomainFunctions(struct _DomainElementFunctions* functions)
       {  set_domain_functions(pvContent, functions); }
    std::vector<uint64_t> nextTargets(char* nextInstruction, int length, uint64_t address,
-         const MemoryState& memoryState, MemoryInterpretParameters& parameters)
+         const MemoryState& memoryState, const DecisionVector& decisionVector,
+         MemoryInterpretParameters& parameters)
       {  std::vector<uint64_t> result;
          result.push_back(0);
          result.push_back(0);
@@ -482,17 +571,19 @@ class Processor {
          MemoryState memory(memoryState);
          bool isValid = processor_next_targets(pvContent, nextInstruction, length, address,
                &argument, reinterpret_cast<MemoryModel*>(&memory), memory.getFunctions(),
-               reinterpret_cast<InterpretParameters*>(&parameters));
+               decisionVector.getContent(), reinterpret_cast<InterpretParameters*>(&parameters));
          assert(isValid);
          result.resize(argument.addresses_length);
          return std::move(result);
       }
 
    void interpret(char* instruction, int length, uint64_t address,
-         uint64_t targetAddress, MemoryState& memoryState, MemoryInterpretParameters& parameters)
-      {  bool isValid = processor_interpret(pvContent, instruction, length, address, targetAddress,
+         uint64_t targetAddress, MemoryState& memoryState,
+         const DecisionVector& decisionVector,
+         MemoryInterpretParameters& parameters)
+      {  bool isValid = processor_interpret(pvContent, instruction, length, &address, targetAddress,
                reinterpret_cast<MemoryModel*>(&memoryState), memoryState.getFunctions(),
-               reinterpret_cast<InterpretParameters*>(&parameters));
+               decisionVector.getContent(), reinterpret_cast<InterpretParameters*>(&parameters));
          assert(isValid);
       }
 };
@@ -550,9 +641,11 @@ int main(int argc, char** argv) {
    char* nextInstruction = instructionBuffer;
    uint64_t address = processArgument.getAddress();
    std::vector<uint64_t> targets;
+   DecisionVector decisionVector = processor.createDecisionVector();
    while (length > 0 && (targets = processor.nextTargets(nextInstruction,
-               length, address, memoryState, parameters)).size() == 1) {
-      processor.interpret(instruction, length, address, targets[0], memoryState, parameters);
+            length, address, memoryState, decisionVector, parameters)).size() == 1) {
+      processor.interpret(instruction, length, address, targets[0],
+            memoryState, decisionVector, parameters);
       length -= (nextInstruction-instruction);
       address += (nextInstruction-instruction);
       instruction = nextInstruction;
@@ -566,10 +659,10 @@ int main(int argc, char** argv) {
    if (length > 0 && targets.size() > 1) {
       for (int index = 0; index < targets.size()-1; ++index) {
          MemoryState memory(memoryState);
-         processor.interpret(instruction, length, address, targets[index], memory, parameters);
+         processor.interpret(instruction, length, address, targets[index], memory, decisionVector, parameters);
          memory.write(std::cout);
       }
-      processor.interpret(instruction, length, address, targets[targets.size()-1], memoryState, parameters);
+      processor.interpret(instruction, length, address, targets[targets.size()-1], memoryState, decisionVector, parameters);
       memoryState.write(std::cout);
    }
    std::cout.flush();

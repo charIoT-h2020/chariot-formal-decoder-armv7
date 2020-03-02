@@ -4,11 +4,11 @@ ARMSEC_BUILD_INCLUDE_DIR=armsec
 
 all: check_memory
 
-armsec_decoder.so: armsec_decoder.h armsec_decoder.cpp               \
+armsec_decoder.so: armsec_decoder.h armsec_decoder.cpp                \
     $(ARMSEC_SRC_DIR)/disasm.hh $(ARMSEC_SRC_DIR)/disasm.cc
 	g++ -I$(ARMSEC_INCLUDE_DIR) -I$(ARMSEC_BUILD_INCLUDE_DIR) -shared \
-      -O0 -g -fPIC armsec_decoder.cpp                                      \
-      $(ARMSEC_SRC_DIR)/disasm.cc                                   \
+      -O2 -g -fPIC armsec_decoder.cpp                                 \
+      $(ARMSEC_SRC_DIR)/disasm.cc                                     \
       -o armsec_decoder.so
 
 check_memory: check_memory.cc dll.cc armsec_decoder.so

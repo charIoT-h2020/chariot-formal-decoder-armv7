@@ -107,6 +107,58 @@ public:
     }
 };
 
+class DecisionVector {
+  private:
+   std::vector<int> vuEarlyDecisions;
+   std::vector<std::pair<int, uint64_t> > vuLastInstructionDecisions;
+
+  public:
+   DecisionVector() = default;
+   DecisionVector(const DecisionVector&) = default;
+
+   void addNewTarget(uint64_t target)
+      {  vuLastInstructionDecisions.push_back(std::make_pair(
+               (int) vuLastInstructionDecisions.size(), target));
+      }
+   void resetLastTarget(uint64_t target)
+      {  vuLastInstructionDecisions.back().second = target; }
+   void setToNextInstruction()
+      {  if (!vuLastInstructionDecisions.empty()) {
+            vuEarlyDecisions.push_back((int) vuLastInstructionDecisions.size());
+            vuLastInstructionDecisions.clear();
+         }
+      }
+   void setToLastInstruction()
+      {  if (!vuLastInstructionDecisions.empty())
+            vuEarlyDecisions.push_back((int) vuLastInstructionDecisions.size());
+      }
+   void filter(uint64_t target)
+      {  for (int index = vuLastInstructionDecisions.size()-1; index >= 0; --index) {
+            if (vuLastInstructionDecisions[index].second != target)
+               vuLastInstructionDecisions.erase(vuLastInstructionDecisions.begin() + index);
+         }
+      }
+   bool isEmpty() const { return vuEarlyDecisions.empty(); }
+   bool isOnLast() const { return vuEarlyDecisions.size() == 1; }
+   uint64_t getLastTarget() const
+      {  assert(vuEarlyDecisions.size() == 1);
+         return !vuLastInstructionDecisions.empty()
+            ? vuLastInstructionDecisions.back().second : 0;
+      }
+   void advance()
+      {  assert(vuEarlyDecisions.size() >= 1);
+         vuEarlyDecisions.erase(vuEarlyDecisions.begin());
+         if (vuEarlyDecisions.empty())
+            vuLastInstructionDecisions.clear();
+      }
+   bool doesNeedSeveralExecution() const
+      {  assert(vuEarlyDecisions.size() >= 1);
+         return vuEarlyDecisions.front() > 1;
+      }
+   bool acceptTarget(uint64_t target) const
+      {  return vuLastInstructionDecisions.back().second == target; }
+};
+
 struct ScalarType
 {
   enum id_t { VOID, BOOL, U8, U16, U32, U64, S8, S16, S32, S64, F32, F64 };
@@ -234,18 +286,23 @@ public:
     {
       assert(pfFunctions);
       return (*pfFunctions->get_type)(deValue);
-    } 
+    }
   ZeroResult queryZeroResult() const
     {
       assert(pfFunctions);
       return (*pfFunctions->query_zero_result)(deValue);
-    } 
+    }
   int getSizeInBits() const
     {
       assert(pfFunctions);
       return (*pfFunctions->get_size_in_bits)(deValue);
-    } 
-   friend char* debugPrint(const DomainValue* value);
+    }
+  bool is_top() const
+    {
+      assert(pfFunctions);
+      return (*pfFunctions->is_top)(deValue);
+    }
+  friend char* debugPrint(const DomainValue* value);
 };
 
 static char*
@@ -1296,6 +1353,7 @@ public:
     { applyUnary(DMFUOSqrt, [](VALUE_TYPE val) { return std::sqrt(val); }); }
 };
 
+class MemoryStateOwner;
 class MemoryState {
   private:
    MemoryModel* pmModel;
@@ -1303,6 +1361,7 @@ class MemoryState {
    InterpretParameters* pParameters;
    DomainEvaluationEnvironment* peDomainEnv;
    mutable unsigned uErrors; /* set of MemoryEvaluationErrorFlags */
+   friend class MemoryStateOwner;
 
   public:
    MemoryState()
@@ -1313,10 +1372,12 @@ class MemoryState {
       :  pmModel(model), pfFunctions(functions), pParameters(parameters),
          peDomainEnv(nullptr), uErrors(0U) {}
    MemoryState(Processor& proc);
+   void assign(const MemoryStateOwner& source);
 
    bool hasError() const { return uErrors; }
    const unsigned& errors() const { return uErrors; }
    void clearErrors() { uErrors = 0U; }
+   void mergeWith(MemoryStateOwner& source);
 
    void setNumberOfRegisters(int number)
       {  (*pfFunctions->set_number_of_registers)(pmModel, number); }
@@ -1422,6 +1483,46 @@ class MemoryState {
             value.value(), pParameters, &uErrors);
       }
 };
+
+class MemoryStateOwner {
+  private:
+   MemoryModel* pmModel;
+   struct _MemoryModelFunctions* pfFunctions;
+   friend class MemoryState;
+
+  public:
+   MemoryStateOwner(const MemoryState& source)
+      :  pmModel(nullptr), pfFunctions(source.pfFunctions)
+      {  if (source.pmModel)
+            pmModel = (*pfFunctions->clone)(source.pmModel);
+      }
+   ~MemoryStateOwner()
+      {  if (pmModel) {
+            (*pfFunctions->free)(pmModel);
+            pmModel = nullptr;
+         }
+      }
+   void swap(MemoryState& source)
+      {  if (pmModel && source.pmModel)
+            (*pfFunctions->swap)(pmModel, source.pmModel);
+      }
+   void mergeWith(MemoryState& source)
+      {  if (pmModel && source.pmModel)
+            (*pfFunctions->merge)(pmModel, source.pmModel);
+      }
+};
+
+inline void
+MemoryState::assign(const MemoryStateOwner& source) {
+   if (pmModel && source.pmModel)
+      (*pfFunctions->assign)(pmModel, source.pmModel);
+}
+
+inline void
+MemoryState::mergeWith(MemoryStateOwner& source) {
+   if (pmModel && source.pmModel)
+      (*pfFunctions->merge)(pmModel, source.pmModel);
+}
 
 struct FP
 {
@@ -1685,6 +1786,8 @@ public:
   struct _DomainElementFunctions domainFunctions;
   InterpretParameters*           interpretParameters;
   MemoryState*                   memoryState;
+  std::unique_ptr<MemoryStateOwner>   mergedMemoryState;
+  std::unique_ptr<MemoryStateOwner>   sourceMemoryState;
   struct _MemoryModelFunctions   memoryFunctions;
 
   struct SRegID : public unisim::util::identifier::Identifier<SRegID>
@@ -1885,9 +1988,37 @@ public:
      }
   
   bool close()
-    {
-      bool result = path.close();
+    { bool result = path.close();
       doesFollow = !result;
+      bool doesAcceptResult = true;
+      if (!next_targets_queries) {
+         if (decisionVector && decisionVector->isOnLast())
+            doesAcceptResult = decisionVector->acceptTarget(current_target);
+      };
+      if (result) {
+         if (mergedMemoryState.get()) {
+            if (doesAcceptResult) {
+               memoryState->mergeWith(*mergedMemoryState);
+               mergedMemoryState.reset();
+            }
+            else
+               mergedMemoryState->swap(*memoryState);
+         }
+         else
+            assert(doesAcceptResult);
+         if (decisionVector && !next_targets_queries)
+            decisionVector->advance();
+         has_set_target = false;
+      }
+      else {
+         if (doesAcceptResult) {
+            if (mergedMemoryState.get())
+               mergedMemoryState->mergeWith(*memoryState);
+            else
+               mergedMemoryState.reset(new MemoryStateOwner(*memoryState));
+         };
+         memoryState->assign(*sourceMemoryState);
+      };
       return result;
     }
 
@@ -1945,20 +2076,30 @@ public:
     
   U32  GetGPR( uint32_t id )
     { assert(memoryState);
-      return U32(memoryState->getRegisterValueAsElement(id), *this);
+      return U32(memoryState->getRegisterValueAsElement(id+1), *this);
     }
   
   // TODO: interworking branches are not correctly handled
   void addJumpTargetAddress(uint32_t val)
-    {  if (target_addresses.addresses_length >= target_addresses.addresses_array_size) {
-          int old_size = target_addresses.addresses_array_size;
-          target_addresses.addresses = (*target_addresses.realloc_addresses)(
-             target_addresses.addresses, old_size,
-             &target_addresses.addresses_array_size,
+    {  if (has_set_target) {
+         --target_addresses.addresses_length;
+          if (decisionVector)
+             decisionVector->resetLastTarget(val);
+       }
+       else {
+          if (target_addresses.addresses_length >= target_addresses.addresses_array_size) {
+             int old_size = target_addresses.addresses_array_size;
+             target_addresses.addresses = (*target_addresses.realloc_addresses)(
+                target_addresses.addresses, old_size,
+                &target_addresses.addresses_array_size,
              target_addresses.address_container);
+          };
+          if (decisionVector)
+             decisionVector->addNewTarget(val);
        }
        target_addresses.addresses[target_addresses.addresses_length] = val;
        ++target_addresses.addresses_length;
+       has_set_target = true;
     }
   void addCallTargetAddress(uint32_t val)
     {  addJumpTargetAddress(val); }
@@ -1969,7 +2110,7 @@ public:
     { assert(memoryState);
       if (next_targets_queries) {
         if (id != 15)
-          memoryState->setRegisterValue(id, std::move(value), domainFunctions);
+          memoryState->setRegisterValue(id+1, std::move(value), domainFunctions);
         else {
           uint32_t val;
           if (value.isConstant(&val))
@@ -1980,13 +2121,19 @@ public:
           }
         }
       }
-      else if (memoryState) // isInterpret
-        memoryState->setRegisterValue(id, std::move(value), domainFunctions);
+      else if (memoryState) { // isInterpret
+        memoryState->setRegisterValue(id+1, std::move(value), domainFunctions);
+        if (id == 15 && decisionVector) {
+          uint32_t val;
+          if (value.isConstant(&val))
+             current_target = val;
+        }
+      };
     }
   enum branch_type_t { B_JMP = 0, B_CALL, B_RET, B_EXC, B_DBG, B_RFE };
   void SetGPR( uint32_t id, const U32& value ) {
     if (id != 15)
-      memoryState->setRegisterValue(id, U32(value), domainFunctions);
+      memoryState->setRegisterValue(id+1, U32(value), domainFunctions);
     else
       SetNIA( value, B_JMP );
   }
@@ -2004,13 +2151,18 @@ public:
         else if (bt == B_RET)
           addReturnTargetAddress(val);
         else
-         addJumpTargetAddress(val);
+          addJumpTargetAddress(val);
       }
       else {
          // [TODO] forcer les disjonctions + énumérer
          // pour les dynamic jumps
       }
-    };
+    }
+    else if (decisionVector) {
+      uint32_t val;
+      if (nia.isConstant(&val))
+         current_target = val;
+    }
   }
 
 
@@ -2317,8 +2469,11 @@ public:
   Mode             mode;
   bool             unpredictable;
   bool             next_targets_queries;
+  bool             has_set_target = false;
   TargetAddresses  target_addresses;
+  DecisionVector*  decisionVector = nullptr;
   bool             is_verbose = false;
+  uint64_t         current_target = 0;
 };
 
 inline
@@ -3031,6 +3186,14 @@ struct Translator
       instruction->disasm(state, std::cout);
       std::cout << '\n';
     };
+    uint32_t next_addr = addr;
+    if (!state.next_targets_queries && state.decisionVector) {
+       if (!state.decisionVector->isOnLast())
+          next_addr += instruction.bytecount;
+       else
+          next_addr = state.decisionVector->getLastTarget();
+    }
+
     for (bool end = false; not end;)
       {
         // Fetch
@@ -3043,13 +3206,15 @@ struct Translator
           state.ITAdvance();
         end = state.close();
       }
+    if (!state.next_targets_queries)
+       addr = next_addr;
   }
 
-  void next_targets(Processor& proc, TargetAddresses& targets)
+  void next_targets(Processor& proc, TargetAddresses& targets, DecisionVector& decisionVector)
   {
     try
       {
-        if      (status.iset == status.Arm)
+        if (status.iset == status.Arm)
           {
             assert(false);
             // ARMISA armisa;
@@ -3060,9 +3225,26 @@ struct Translator
             THUMBISA thumbisa;
             proc.next_targets_queries = true;
             proc.target_addresses = targets;
+            proc.decisionVector = &decisionVector;
+            proc.sourceMemoryState.reset(new MemoryStateOwner(*proc.memoryState));
             extract( thumbisa, proc );
             targets = proc.target_addresses;
             proc.next_targets_queries = false;
+            // remove duplicates
+            for (int i = 0; i < targets.addresses_length-1; ++i) {
+               for (int j = i+1; j < targets.addresses_length; ++j) {
+                  if (targets.addresses[i] == targets.addresses[j]) {
+                     if (j < targets.addresses_length-1)
+                        memmove(&targets.addresses[j], &targets.addresses[j+1],
+                              sizeof(uint64_t)*(targets.addresses_length-j-1));
+                     --j;
+                     --targets.addresses_length;
+                  }
+               }
+            };
+            proc.target_addresses = { nullptr, 0, 0, nullptr, nullptr};
+            proc.decisionVector = nullptr;
+            proc.sourceMemoryState.reset();
           }
         else
           throw 0;
@@ -3076,7 +3258,7 @@ struct Translator
         throw;
       }
   }
-  void interpret(Processor& proc)
+  void interpret(Processor& proc, DecisionVector& decisionVector)
   {
     try
       {
@@ -3089,7 +3271,12 @@ struct Translator
         else if (status.iset == status.Thumb)
           {
             THUMBISA thumbisa;
+            proc.decisionVector = &decisionVector;
+            if (decisionVector.doesNeedSeveralExecution())
+               proc.sourceMemoryState.reset(new MemoryStateOwner(*proc.memoryState));
             extract( thumbisa, proc );
+            proc.sourceMemoryState.reset();
+            proc.decisionVector = nullptr;
           }
         else
           throw 0;
@@ -3139,6 +3326,9 @@ DLL_API void processor_set_verbose(struct _Processor* processor)
 DLL_API void free_processor(struct _Processor* processor)
 {  delete reinterpret_cast<Processor*>(processor); }
 
+DLL_API int processor_get_registers_number(struct _Processor* processor)
+{  return Processor::RLEnd; }
+
 DLL_API int processor_get_register_index(struct _Processor* processor,
       const char* name)
 {  int code = Processor::RegID(name).code;
@@ -3161,10 +3351,28 @@ DLL_API const char* processor_get_register_name(struct _Processor* processor,
    return Processor::RegID((Processor::RegID::Code) register_index).c_str();
 }
   
+DLL_API struct _DecisionVector* processor_create_decision_vector(struct _Processor* processor)
+{  return reinterpret_cast<struct _DecisionVector*>(new DecisionVector()); }
+
+DLL_API struct _DecisionVector* processor_clone_decision_vector(struct _DecisionVector* decision_vector)
+{  return reinterpret_cast<struct _DecisionVector*>(new DecisionVector(
+         *reinterpret_cast<DecisionVector*>(decision_vector)));
+}
+
+DLL_API void processor_free_decision_vector(struct _DecisionVector* decision_vector)
+{  delete reinterpret_cast<DecisionVector*>(decision_vector); }
+
+DLL_API void processor_filter_decision_vector(struct _DecisionVector* decision_vector,
+      uint64_t target)
+{  auto* decisionVector = reinterpret_cast<DecisionVector*>(decision_vector);
+   decisionVector->setToLastInstruction();
+   decisionVector->filter(target);
+}
+
 DLL_API bool processor_next_targets(struct _Processor* processor, char* instruction_buffer,
       size_t buffer_size, uint64_t address, TargetAddresses* target_addresses,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,
-      InterpretParameters* parameters) {
+      struct _DecisionVector* decision_vector, InterpretParameters* parameters) {
   Processor* proc = reinterpret_cast<Processor*>(processor);
   proc->setMemoryFunctions(*memory_functions);
   MemoryState memoryState(memory, memory_functions, parameters);
@@ -3178,14 +3386,16 @@ DLL_API bool processor_next_targets(struct _Processor* processor, char* instruct
   Translator actset( address, code );
   Processor::StatusRegister& status = actset.status;
   status.iset = status.Thumb;
-  actset.next_targets(*proc, *target_addresses);
+  DecisionVector* decisionVector = reinterpret_cast<DecisionVector*>(decision_vector);
+  decisionVector->setToNextInstruction();
+  actset.next_targets(*proc, *target_addresses, *decisionVector);
   return true;
 }
 
 DLL_API bool processor_interpret(struct _Processor* processor, char* instruction_buffer,
-      size_t buffer_size, uint64_t address, uint64_t target_address,
+      size_t buffer_size, uint64_t* address, uint64_t target_address,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,
-      InterpretParameters* parameters) {
+      struct _DecisionVector* decision_vector, InterpretParameters* parameters) {
   Processor* proc = reinterpret_cast<Processor*>(processor);
   proc->setMemoryFunctions(*memory_functions);
   MemoryState memoryState(memory, memory_functions, parameters);
@@ -3196,11 +3406,13 @@ DLL_API bool processor_interpret(struct _Processor* processor, char* instruction
   memcpy(&code, instruction_buffer, sizeof(code));
   unisim::util::endian::ByteSwap(code);
 
-  Translator actset( address, code );
+  Translator actset( *address, code );
   Processor::StatusRegister& status = actset.status;
   status.iset = status.Thumb;
-  actset.interpret(*proc);
-  return true;
+  DecisionVector* decisionVector = reinterpret_cast<DecisionVector*>(decision_vector);
+  actset.interpret(*proc, *decisionVector);
+  *address = actset.addr;
+  return decisionVector->isEmpty();
 }
 
 }

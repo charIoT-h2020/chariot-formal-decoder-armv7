@@ -31,7 +31,7 @@ private:
   void clearHigh(int bitPosition)
     { assert(0 <= bitPosition && bitPosition<=2*8*sizeof(uint64_t));
       if (bitPosition%(8*sizeof(uint64_t)) > 0)
-        auChoice[(bitPosition+8*sizeof(uint64_t)-1)/(8*sizeof(uint64_t))]
+        auChoice[bitPosition/(8*sizeof(uint64_t))]
             &= ~(~((uint64_t) 0) << (bitPosition%(8*sizeof(uint64_t))));
       for (int index = (bitPosition+8*sizeof(uint64_t)-1)/(8*sizeof(uint64_t)); index < 2; ++index)
         auChoice[index] = 0;
@@ -40,23 +40,23 @@ private:
 public:
   unsigned& currentStackPosition() { return uCurrentStackPosition; }
   unsigned& lastZeroBit() { return uLastZeroBit; }
-  unsigned& lastIncBit() { return uLastZeroBit; }
+  unsigned& lastIncBit() { return uLastIncBit; }
   bool& lastResult() { return uLastResult; }
   bool& lastLogCases() { return uLastLogCases; }
 
   bool cbitArray(int bitPosition) const
     { assert(0 <= bitPosition && bitPosition<2*8*sizeof(uint64_t));
-      return auChoice[(bitPosition+8*sizeof(uint64_t)-1)/(8*sizeof(uint64_t))]
+      return auChoice[bitPosition/(8*sizeof(uint64_t))]
             & (((uint64_t) 1) << (bitPosition%(8*sizeof(uint64_t))));
     }
   void setFalseBitArray(int bitPosition)
     { assert(0 <= bitPosition && bitPosition<2*8*sizeof(uint64_t));
-      auChoice[(bitPosition+8*sizeof(uint64_t)-1)/(8*sizeof(uint64_t))]
+      auChoice[bitPosition/(8*sizeof(uint64_t))]
            &= ~(((uint64_t) 1) << (bitPosition%(8*sizeof(uint64_t))));
     }
   void setTrueBitArray(int bitPosition)
     { assert(0 <= bitPosition && bitPosition<2*8*sizeof(uint64_t));
-      auChoice[(bitPosition+8*sizeof(uint64_t)-1)/(8*sizeof(uint64_t))]
+      auChoice[bitPosition/(8*sizeof(uint64_t))]
            |= (((uint64_t) 1) << (bitPosition%(8*sizeof(uint64_t))));
     }
   int log_base_2() const
@@ -1757,7 +1757,10 @@ struct Processor
       }
       return result;
     }
-    void   Set( ERF const& _, const U32& value ) { if (proc.Test(value != U32(bigendian))) proc.UnpredictableInsnBehaviour(); }
+    void   Set( ERF const& _, const U32& value )
+      { bool defaultMultipleValue = true;
+        if (proc.Test(value != U32(bigendian), &defaultMultipleValue)) proc.UnpredictableInsnBehaviour();
+      }
     void   SetITState( uint8_t init_val, Processor& p )
        { this->Set(ITLORF(), U32(init_val));
          this->Set(ITHIRF(), U32(init_val>>2));
@@ -1994,7 +1997,9 @@ public:
       if (!next_targets_queries) {
          if (decisionVector && decisionVector->isOnLast())
             doesAcceptResult = decisionVector->acceptTarget(current_target);
-      };
+      }
+      else
+         has_set_target = false;
       if (result) {
          if (mergedMemoryState.get()) {
             if (doesAcceptResult) {
@@ -2008,7 +2013,6 @@ public:
             assert(doesAcceptResult);
          if (decisionVector && !next_targets_queries)
             decisionVector->advance();
-         has_set_target = false;
       }
       else {
          if (doesAcceptResult) {
@@ -2017,6 +2021,7 @@ public:
             else
                mergedMemoryState.reset(new MemoryStateOwner(*memoryState));
          };
+         assert(sourceMemoryState.get()); // interpret follow same path than next_targets
          memoryState->assign(*sourceMemoryState);
       };
       return result;
@@ -2031,11 +2036,17 @@ public:
   template <typename OP>
   void UndefinedInstruction( OP* op ) { throw Undefined(); }
     
-  bool Test( DomainBitValue const& cond )
+  bool Test( DomainBitValue const& cond, bool* multipleTarget=nullptr )
     {
       bool result;
       if (cond.isConstant(&result))
         return result;
+      if (multipleTarget) {
+         result = *multipleTarget;
+         *multipleTarget = true;
+         return result;
+      }
+
       if (doesFollow) {
         doesFollow = (path.currentStackPosition() < (int) path.log_base_2() - 1);
         if (doesFollow) {
@@ -2226,7 +2237,13 @@ public:
   U32& SPSR() { throw Unimplemented(); static U32 spsr_dummy; return spsr_dummy; }
   
   ITCond itcond() const { return ITCond(); }
-  bool itblock() { return Test(cpsr.InITBlock()); }
+  bool itblock()
+    { bool defaultMultipleValue = false;
+      bool res = Test(cpsr.InITBlock(), &defaultMultipleValue);
+      if (defaultMultipleValue)
+        UnpredictableInsnBehaviour();
+      return res;
+    }
   
   void ITSetState( uint32_t cond, uint32_t mask )
   {
@@ -2241,7 +2258,11 @@ public:
     else if (itblock())
       {
         U8 itstate( cpsr.GetITState() );
-        itstate = (Test((itstate & U8(7)) != U8(0))) ? ((itstate & U8(-32)) | ((itstate << 1) & U8(31))) : U8(0);
+        bool defaultMultipleValue = false;
+        itstate = (Test((itstate & U8(7)) != U8(0), &defaultMultipleValue))
+          ? ((itstate & U8(-32)) | ((itstate << 1) & U8(31))) : U8(0);
+        if (defaultMultipleValue)
+          UnpredictableInsnBehaviour();
         cpsr.SetITState(std::move(itstate));
       }
   }
@@ -3121,13 +3142,29 @@ Processor::PSR::SetBits( U32 const& bits, uint32_t mask )
         throw 0;
       U32       nmode = MRF().Get(bits);
       MRF().Set(mask, 0u);
-      if (proc.Test(nmode != U32(mode)))
+      bool defaultMultipleValue = true;
+      if (proc.Test(nmode != U32(mode), &defaultMultipleValue))
         proc.UnpredictableInsnBehaviour();
     }
         
-  if (JRF().Get(mask)) { if (proc.Test(JRF().Get(bits) != U32(GetJ())))    { proc.UnpredictableInsnBehaviour(); } JRF().Set(mask, 0u); }
-  if (TRF().Get(mask)) { if (proc.Test(TRF().Get(bits) != U32(GetT())))    { proc.UnpredictableInsnBehaviour(); } TRF().Set(mask, 0u); }
-  if (ERF().Get(mask)) { if (proc.Test(ERF().Get(bits) != U32(bigendian))) { proc.UnpredictableInsnBehaviour(); } ERF().Set(mask, 0u); }
+  if (JRF().Get(mask))
+    { bool defaultMultipleValue = true;
+      if (proc.Test(JRF().Get(bits) != U32(GetJ()), &defaultMultipleValue))
+        { proc.UnpredictableInsnBehaviour(); }
+      JRF().Set(mask, 0u);
+    }
+  if (TRF().Get(mask))
+    { bool defaultMultipleValue = true;
+      if (proc.Test(TRF().Get(bits) != U32(GetT()), &defaultMultipleValue))
+        { proc.UnpredictableInsnBehaviour(); }
+      TRF().Set(mask, 0u);
+    }
+  if (ERF().Get(mask))
+    { bool defaultMultipleValue = true;
+      if (proc.Test(ERF().Get(bits) != U32(bigendian), &defaultMultipleValue))
+        { proc.UnpredictableInsnBehaviour(); }
+      ERF().Set(mask, 0u);
+    }
         
   U32 bg = GetBits();
   bg = (bg & U32(~mask)) | (bits & U32(mask));
@@ -3208,6 +3245,11 @@ struct Translator
       }
     if (!state.next_targets_queries)
        addr = next_addr;
+    if (state.unpredictable) {
+      if (state.is_verbose)
+        std::cout << "\t\twarning: unpredicable instruction\n";
+      state.unpredictable = false;
+    }
   }
 
   void next_targets(Processor& proc, TargetAddresses& targets, DecisionVector& decisionVector)

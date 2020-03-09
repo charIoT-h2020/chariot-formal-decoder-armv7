@@ -1400,7 +1400,7 @@ class MemoryState {
 
    void initializeThumbMemory(struct _DomainElementFunctions& functions)
       {  
-        auto bg = DomainMultiBitValue<uint32_t>(0x60);
+        auto bg = DomainMultiBitValue<uint32_t>(0x13 /* SUPERVISOR_MODE */ | ((0x60 >> 6) << 10) | ((0x60 & 0x3) << 25) );
         setRegisterValue(CPSR_ID, std::move(bg), functions);
       }
 
@@ -1722,7 +1722,9 @@ struct Processor
       StaticAssert<(RF::pos >  5) or ((RF::pos + RF::size) <=  0)>::check(); // T, MODE
 
       U32 reg = GetBits();
-      _.Set( reg, value );
+      U32 val = value;
+      val.reduce(0, RF::size-1);
+      reg.bitset(RF::pos, RF::pos+RF::size-1, val);
       SetBits( reg, -1 );
     }
       
@@ -1733,8 +1735,10 @@ struct Processor
       StaticAssert<(RF::pos > 24) or ((RF::pos + RF::size) <= 24)>::check(); // ITLO, J
       StaticAssert<(RF::pos >  9) or ((RF::pos + RF::size) <=  9)>::check(); // ITHI, E
       StaticAssert<(RF::pos >  5) or ((RF::pos + RF::size) <=  0)>::check(); // T, MODE
-        
-      return _.Get( GetBits() );
+      U32 val = GetBits();
+      val.reduce(RF::pos, RF::pos+RF::size-1);
+      val.extendWithZero(32-RF::size);
+      return val;
     }
       
     void   SetBits( U32 const& bits, uint32_t mask );
@@ -3140,8 +3144,10 @@ Processor::PSR::SetBits( U32 const& bits, uint32_t mask )
     {
       if (MRF().Get(mask) != 0x1f)
         throw 0;
-      U32       nmode = MRF().Get(bits);
-      MRF().Set(mask, 0u);
+      U32       nmode = bits;
+      nmode.reduce(MRF::pos, MRF::pos+MRF::size-1);
+      if (~mask)
+        MRF().Set(mask, 0u);
       bool defaultMultipleValue = true;
       if (proc.Test(nmode != U32(mode), &defaultMultipleValue))
         proc.UnpredictableInsnBehaviour();
@@ -3149,25 +3155,37 @@ Processor::PSR::SetBits( U32 const& bits, uint32_t mask )
         
   if (JRF().Get(mask))
     { bool defaultMultipleValue = true;
-      if (proc.Test(JRF().Get(bits) != U32(GetJ()), &defaultMultipleValue))
+      U32 jrf = bits;
+      jrf.reduce(JRF::pos, JRF::pos+JRF::size-1);
+      if (proc.Test(jrf != U32(GetJ()), &defaultMultipleValue))
         { proc.UnpredictableInsnBehaviour(); }
-      JRF().Set(mask, 0u);
+      if (~mask)
+        JRF().Set(mask, 0u);
     }
   if (TRF().Get(mask))
     { bool defaultMultipleValue = true;
-      if (proc.Test(TRF().Get(bits) != U32(GetT()), &defaultMultipleValue))
+      U32 trf = bits;
+      trf.reduce(TRF::pos, TRF::pos+TRF::size-1);
+      if (proc.Test(trf != U32(GetT()), &defaultMultipleValue))
         { proc.UnpredictableInsnBehaviour(); }
-      TRF().Set(mask, 0u);
+      if (~mask)
+        TRF().Set(mask, 0u);
     }
   if (ERF().Get(mask))
     { bool defaultMultipleValue = true;
-      if (proc.Test(ERF().Get(bits) != U32(bigendian), &defaultMultipleValue))
+      U32 erf = bits;
+      erf.reduce(ERF::pos, ERF::pos+ERF::size-1);
+      if (proc.Test(erf != U32(bigendian), &defaultMultipleValue))
         { proc.UnpredictableInsnBehaviour(); }
-      ERF().Set(mask, 0u);
+      if (~mask)
+        ERF().Set(mask, 0u);
     }
         
   U32 bg = GetBits();
-  bg = (bg & U32(~mask)) | (bits & U32(mask));
+  if (~mask)
+    bg = (bg & U32(~mask)) | (bits & U32(mask));
+  else
+    bg = bits;
   proc.memoryState->setRegisterValue(CPSR_ID, std::move(bg), proc.domainFunctions);
 }
 

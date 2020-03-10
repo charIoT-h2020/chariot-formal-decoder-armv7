@@ -614,9 +614,9 @@ public:
     }
   operator DomainBitValue() const
     {
-      if (inherited::isValid())
-        return DomainBitValue((*functionTable().multibit_create_cast_bit)
-            (value(), env()), *this);
+      if (inherited::isValid()) // [TODO] do not assume it is the first bit
+        return DomainBitValue((*functionTable().multibit_create_cast_shift_bit)
+            (value(), 0, env()), *this);
       else
         return DomainBitValue((bool) uConstant);
     }
@@ -2006,12 +2006,11 @@ public:
          has_set_target = false;
       if (result) {
          if (mergedMemoryState.get()) {
-            if (doesAcceptResult) {
+            if (doesAcceptResult)
                memoryState->mergeWith(*mergedMemoryState);
-               mergedMemoryState.reset();
-            }
             else
                mergedMemoryState->swap(*memoryState);
+            mergedMemoryState.reset();
          }
          else
             assert(doesAcceptResult);
@@ -2091,7 +2090,10 @@ public:
     
   U32  GetGPR( uint32_t id )
     { assert(memoryState);
-      return U32(memoryState->getRegisterValueAsElement(id+1), *this);
+      if (id != 15)
+        return U32(memoryState->getRegisterValueAsElement(id), *this);
+      else
+        return U32(branch_address);
     }
   
   // TODO: interworking branches are not correctly handled
@@ -2125,7 +2127,7 @@ public:
     { assert(memoryState);
       if (next_targets_queries) {
         if (id != 15)
-          memoryState->setRegisterValue(id+1, std::move(value), domainFunctions);
+          memoryState->setRegisterValue(id, std::move(value), domainFunctions);
         else {
           uint32_t val;
           if (value.isConstant(&val))
@@ -2134,10 +2136,11 @@ public:
              // [TODO] forcer les disjonctions + énumérer
              // pour les dynamic jumps
           }
+          current_target = val;
         }
       }
       else if (memoryState) { // isInterpret
-        memoryState->setRegisterValue(id+1, std::move(value), domainFunctions);
+        memoryState->setRegisterValue(id, std::move(value), domainFunctions);
         if (id == 15 && decisionVector) {
           uint32_t val;
           if (value.isConstant(&val))
@@ -2148,14 +2151,14 @@ public:
   enum branch_type_t { B_JMP = 0, B_CALL, B_RET, B_EXC, B_DBG, B_RFE };
   void SetGPR( uint32_t id, const U32& value ) {
     if (id != 15)
-      memoryState->setRegisterValue(id+1, U32(value), domainFunctions);
+      memoryState->setRegisterValue(id, U32(value), domainFunctions);
     else
       SetNIA( value, B_JMP );
   }
   void SetGPR_usr( uint32_t id, U32 const& value ) { /* system mode */ throw Unimplemented(); }
   U32  GetGPR_usr( uint32_t id ) { /* system mode */ throw Unimplemented(); return U32(); }
     
-  U32  GetNIA() { return U32(target_addresses.addresses[0]); }
+  U32  GetNIA() { return U32(current_target); }
   void SetNIA( U32 const& nia, branch_type_t bt )
   {
     if (next_targets_queries) {
@@ -2172,6 +2175,7 @@ public:
          // [TODO] forcer les disjonctions + énumérer
          // pour les dynamic jumps
       }
+      current_target = val;
     }
     else if (decisionVector) {
       uint32_t val;
@@ -2499,6 +2503,7 @@ public:
   DecisionVector*  decisionVector = nullptr;
   bool             is_verbose = false;
   uint64_t         current_target = 0;
+  uint64_t         branch_address= 0;
 };
 
 inline
@@ -3146,11 +3151,10 @@ Processor::PSR::SetBits( U32 const& bits, uint32_t mask )
         throw 0;
       U32       nmode = bits;
       nmode.reduce(MRF::pos, MRF::pos+MRF::size-1);
-      if (~mask)
-        MRF().Set(mask, 0u);
       bool defaultMultipleValue = true;
       if (proc.Test(nmode != U32(mode), &defaultMultipleValue))
         proc.UnpredictableInsnBehaviour();
+      MRF().Set(mask, 0u);
     }
         
   if (JRF().Get(mask))
@@ -3159,8 +3163,7 @@ Processor::PSR::SetBits( U32 const& bits, uint32_t mask )
       jrf.reduce(JRF::pos, JRF::pos+JRF::size-1);
       if (proc.Test(jrf != U32(GetJ()), &defaultMultipleValue))
         { proc.UnpredictableInsnBehaviour(); }
-      if (~mask)
-        JRF().Set(mask, 0u);
+      JRF().Set(mask, 0u);
     }
   if (TRF().Get(mask))
     { bool defaultMultipleValue = true;
@@ -3168,8 +3171,7 @@ Processor::PSR::SetBits( U32 const& bits, uint32_t mask )
       trf.reduce(TRF::pos, TRF::pos+TRF::size-1);
       if (proc.Test(trf != U32(GetT()), &defaultMultipleValue))
         { proc.UnpredictableInsnBehaviour(); }
-      if (~mask)
-        TRF().Set(mask, 0u);
+      TRF().Set(mask, 0u);
     }
   if (ERF().Get(mask))
     { bool defaultMultipleValue = true;
@@ -3177,15 +3179,35 @@ Processor::PSR::SetBits( U32 const& bits, uint32_t mask )
       erf.reduce(ERF::pos, ERF::pos+ERF::size-1);
       if (proc.Test(erf != U32(bigendian), &defaultMultipleValue))
         { proc.UnpredictableInsnBehaviour(); }
-      if (~mask)
-        ERF().Set(mask, 0u);
+      ERF().Set(mask, 0u);
     }
         
   U32 bg = GetBits();
-  if (~mask)
-    bg = (bg & U32(~mask)) | (bits & U32(mask));
-  else
-    bg = bits;
+  if (mask != 0) {
+    int packet_pos = unisim::util::arithmetic::BitScanForward(mask);
+    if (packet_pos > 0)
+      mask >>= packet_pos;
+    do {
+      ++mask;
+      int packet_len = unisim::util::arithmetic::BitScanForward(mask);
+      U32 newbits = bits;
+      newbits.reduce(packet_pos, packet_pos+packet_len-1);
+      bg.bitset(packet_pos, packet_pos+packet_len-1, newbits);
+      packet_pos += packet_len;
+      if (packet_len < 32) {
+        mask >>= packet_len;
+        mask &= (~0UL << 1);
+      }
+      else
+        mask == 0;
+      if (mask != 0) {
+        int packet_newpos = unisim::util::arithmetic::BitScanForward(mask);
+        if (packet_newpos > 0)
+          mask >>= packet_newpos;
+        packet_pos += packet_newpos;
+      }
+    } while (mask != 0);
+  };
   proc.memoryState->setRegisterValue(CPSR_ID, std::move(bg), proc.domainFunctions);
 }
 
@@ -3254,6 +3276,7 @@ struct Translator
         // Fetch
         uint32_t insn_addr = instruction->GetAddr();
         state.SetNIA( Processor::U32(insn_addr + instruction.bytecount), Processor::B_JMP );
+        state.branch_address = insn_addr + (is_thumb ? 4 : 8);
         // state.reg_values[15] = Processor::U32(insn_addr + (is_thumb ? 4 : 8) );
         // Execute
         instruction->execute( state );

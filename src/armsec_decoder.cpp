@@ -2091,7 +2091,7 @@ public:
   U32  GetGPR( uint32_t id )
     { assert(memoryState);
       if (id != 15)
-        return U32(memoryState->getRegisterValueAsElement(id), *this);
+        return U32(memoryState->getRegisterValueAsElement(RegID("r0").code + id), *this);
       else
         return U32(branch_address);
     }
@@ -2127,7 +2127,7 @@ public:
     { assert(memoryState);
       if (next_targets_queries) {
         if (id != 15)
-          memoryState->setRegisterValue(id, std::move(value), domainFunctions);
+          memoryState->setRegisterValue(RegID("r0").code + id, std::move(value), domainFunctions);
         else {
           uint32_t val;
           if (value.isConstant(&val))
@@ -2151,7 +2151,7 @@ public:
   enum branch_type_t { B_JMP = 0, B_CALL, B_RET, B_EXC, B_DBG, B_RFE };
   void SetGPR( uint32_t id, const U32& value ) {
     if (id != 15)
-      memoryState->setRegisterValue(id, U32(value), domainFunctions);
+      memoryState->setRegisterValue(RegID("r0").code + id, U32(value), domainFunctions);
     else
       SetNIA( value, B_JMP );
   }

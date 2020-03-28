@@ -1,16 +1,32 @@
-ARMSEC_INCLUDE_DIR=../armsec/armsec
-ARMSEC_SRC_DIR=$(ARMSEC_INCLUDE_DIR)/unisim/component/cxx/processor/arm
-ARMSEC_BUILD_INCLUDE_DIR=armsec
+CPPFLAGS=
+CXXFLAGS=-O0 -g3 -fPIC 
+BUILD=build
+
+ARMSRCS=armsec_decoder.cpp armsec/unisim/component/cxx/processor/arm/disasm.cc
+ARMOBJS=$(patsubst %,$(BUILD)/%.o,$(basename $(ARMSRCS)))
+
+$(ARMOBJS): CPPFLAGS+=-Iarmsec
+
+CXXPPOBJS=$(patsubst %.cpp,$(BUILD)/%.o,$(filter %.cpp,$(ARMSRCS)))
+CXXCOBJS=$(patsubst %.cc,$(BUILD)/%.o,$(filter %.cc,$(ARMSRCS)))
 
 all: check_memory
 
-armsec_decoder.so: armsec_decoder.h armsec_decoder.cpp                \
-    $(ARMSEC_SRC_DIR)/disasm.hh $(ARMSEC_SRC_DIR)/disasm.cc
-	g++ -I$(ARMSEC_INCLUDE_DIR) -I$(ARMSEC_BUILD_INCLUDE_DIR) -shared \
-      -O2 -g -fPIC armsec_decoder.cpp                                 \
-      $(ARMSEC_SRC_DIR)/disasm.cc                                     \
-      -o armsec_decoder.so
+define COMPILE
+@mkdir -p `dirname $@`
+$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -o $@ -c $<
+endef
+
+$(CXXCOBJS): $(BUILD)/%.o: %.cc
+	$(COMPILE)
+
+$(CXXPPOBJS): $(BUILD)/%.o: %.cpp
+	$(COMPILE)
+
+armsec_decoder.so: $(ARMOBJS)
+	g++ -Iarmsec -shared -o armsec_decoder.so $(ARMOBJS)
 
 check_memory: check_memory.cc dll.cc armsec_decoder.so
 	g++ -O0 -g check_memory.cc dll.cc armsec_decoder.so -ldl -o check_memory -Wl,-rpath .
 
+-include armsec_decoder.d

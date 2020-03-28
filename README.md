@@ -32,18 +32,7 @@ make
 
 # build armsec\_decoder.so
 
-`armsec` should have been previously built to generate the files
-`armsec/build_release/armsec/top_thumb.hh` and
-`armsec/build_release/armsec/top_thumb.cc`.
-
-You need to go in the `src` directory. Then you need to create a
-sub-directory `armsec` that contains the previously generated files:
-
-```sh
-mkdir -p armsec
-ln -s ../armsec/build_release/armsec/top_thumb.hh armsec/top_thumb.hh
-ln -s ../armsec/build_release/armsec/top_thumb.cc armsec/top_thumb.cc
-```
+You need to go in the `src` directory.
 
 Then the command
 

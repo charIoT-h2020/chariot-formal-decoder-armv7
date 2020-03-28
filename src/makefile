@@ -1,5 +1,5 @@
 CPPFLAGS=-I.
-CXXFLAGS=-O0 -g3 -fPIC 
+CXXFLAGS=-O2 -g3 -fPIC 
 BUILD=build
 
 ARMSRCS=armsec_decoder.cpp armsec/unisim/component/cxx/processor/arm/disasm.cc
@@ -37,5 +37,8 @@ mipsec_decoder.so: $(MIPOBJS)
 
 check_memory: check_memory.cc dll.cc armsec_decoder.so
 	g++ -O0 -g check_memory.cc dll.cc armsec_decoder.so -ldl -o check_memory -Wl,-rpath .
+
+clean:
+	rm -Rf build armsec_decoder.so
 
 -include armsec_decoder.d

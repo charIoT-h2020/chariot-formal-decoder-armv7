@@ -1,0 +1,3 @@
+build*
+armsec_decoder.so
+check_memory

@@ -1,4 +1,0 @@
-This package contains:
-  - Mipselsec: an little endian Mips symbolic translator
-  - GenISSLib (will not be installed): an instruction set simulator generator
-See INSTALL for installation instructions.

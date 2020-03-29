@@ -1,3 +1,4 @@
 build*
 armsec_decoder.so
+mipsec_decoder.so
 check_memory

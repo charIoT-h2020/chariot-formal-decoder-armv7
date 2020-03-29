@@ -1612,6 +1612,8 @@ struct Processor
   typedef DomainMultiBitValue<int32_t> S32;
   typedef DomainMultiBitValue<int64_t> S64;
 
+  enum branch_type_t { B_JMP = 0, B_CALL, B_RET, B_EXC, B_DBG, B_RFE };
+  
   struct RegID : public unisim::util::identifier::Identifier<RegID>
   {
     enum Code
@@ -1673,6 +1675,8 @@ struct Processor
     RegID( char const* _code ) : code(end) { init( _code ); }
   };
 
+  bool IsBigEndian() const { return false; }
+
 private:
   Processor( Processor const& );
 
@@ -1688,18 +1692,18 @@ public:
   
   enum RegisterLimits
     {
-      RLStart=0,
-      RLGeneralPurpose=15,
-      RLStartSpecial=RLGeneralPurpose,
-      RLSpecial=RLGeneralPurpose+RegID::end,
-      RLStartNeonRegs=RLSpecial,
-      RLNeonRegs=RLSpecial+32,
-      RLStartForeign=RLNeonRegs,
-      RLEnd = RLNeonRegs
+     RLStart=0,
+     RLGeneralPurpose=15,
+     RLStartSpecial=RLGeneralPurpose,
+     RLSpecial=RLGeneralPurpose+RegID::end,
+     RLStartNeonRegs=RLSpecial,
+     RLNeonRegs=RLSpecial+32,
+     RLStartForeign=RLNeonRegs,
+     RLEnd = RLNeonRegs
     };
   Processor()
-     :  domainEnvironment(), domainFunctions{}, interpretParameters(nullptr),
-        memoryState(nullptr), memoryFunctions(), next_targets_queries{}, target_addresses{}
+    :  domainEnvironment(), domainFunctions{}, interpretParameters(nullptr),
+       memoryState(nullptr), memoryFunctions(), next_targets_queries{}, target_addresses{}
   {}
 
   void setMemoryFunctions(struct _MemoryModelFunctions& functions) { memoryFunctions = functions; }
@@ -1708,164 +1712,121 @@ public:
   struct _DomainElementFunctions& getDomainFunctions() { return domainFunctions; }
   void setInterpretParameters(InterpretParameters& params) { interpretParameters = &params; }
   void setMemoryState(MemoryState& memory)
-     {  memoryState = &memory;
-        // [TODO] manage ForeignRegisters
-        memory.setNumberOfRegisters(RLEnd);
-        memory.setEvaluationEnvironment(domainEnvironment);
-     }
+  {  memoryState = &memory;
+    // [TODO] manage ForeignRegisters
+    memory.setNumberOfRegisters(RLEnd);
+    memory.setEvaluationEnvironment(domainEnvironment);
+  }
   
   bool close()
-    { bool result = path.close();
-      doesFollow = !result;
-      bool doesAcceptResult = true;
-      if (!next_targets_queries) {
-         if (decisionVector && decisionVector->isOnLast())
-            doesAcceptResult = decisionVector->acceptTarget(current_target);
+  { bool result = path.close();
+    doesFollow = !result;
+    bool doesAcceptResult = true;
+    if (!next_targets_queries) {
+      if (decisionVector && decisionVector->isOnLast())
+        doesAcceptResult = decisionVector->acceptTarget(current_target);
+    }
+    else
+      has_set_target = false;
+    if (result) {
+      if (mergedMemoryState.get()) {
+        if (doesAcceptResult)
+          memoryState->mergeWith(*mergedMemoryState);
+        else
+          mergedMemoryState->swap(*memoryState);
+        mergedMemoryState.reset();
       }
       else
-         has_set_target = false;
-      if (result) {
-         if (mergedMemoryState.get()) {
-            if (doesAcceptResult)
-               memoryState->mergeWith(*mergedMemoryState);
-            else
-               mergedMemoryState->swap(*memoryState);
-            mergedMemoryState.reset();
-         }
-         else
-            assert(doesAcceptResult);
-         if (decisionVector && !next_targets_queries)
-            decisionVector->advance();
-      }
-      else {
-         if (doesAcceptResult) {
-            if (mergedMemoryState.get())
-               mergedMemoryState->mergeWith(*memoryState);
-            else
-               mergedMemoryState.reset(new MemoryStateOwner(*memoryState));
-         };
-         assert(sourceMemoryState.get()); // interpret follow same path than next_targets
-         memoryState->assign(*sourceMemoryState);
-      };
-      return result;
+        assert(doesAcceptResult);
+      if (decisionVector && !next_targets_queries)
+        decisionVector->advance();
     }
+    else {
+      if (doesAcceptResult) {
+        if (mergedMemoryState.get())
+          mergedMemoryState->mergeWith(*memoryState);
+        else
+          mergedMemoryState.reset(new MemoryStateOwner(*memoryState));
+      };
+      assert(sourceMemoryState.get()); // interpret follow same path than next_targets
+      memoryState->assign(*sourceMemoryState);
+    };
+    return result;
+  }
 
   //   =====================================================================
   //   =                 Internal Instruction Control Flow                 =
   //   =====================================================================
   
   bool Test( DomainBitValue const& cond, bool* multipleTarget=nullptr )
-    {
-      bool result;
-      if (cond.isConstant(&result))
-        return result;
-      if (multipleTarget) {
-         result = *multipleTarget;
-         *multipleTarget = true;
-         return result;
-      }
-
-      if (doesFollow) {
-        doesFollow = (path.currentStackPosition() < (int) path.log_base_2() - 1);
-        if (doesFollow) {
-          result = !path.cbitArray(path.currentStackPosition());
-          if (result) {
-            path.lastIncBit() = path.currentStackPosition();
-            path.lastZeroBit() = path.currentStackPosition()+1;
-          }
-        }
-        else {
-          assert(path.cbitArray(path.currentStackPosition()));
-          path.lastLogCases() = 1;
-          path.lastResult() = 0; /* false */
-          // path.setFalseBitArray(path.currentStackPosition());
-          result = false;
-        };
-      }
-      else {
-         path.lastLogCases() = 1;
-         path.lastResult() = 1; /* true */
-         path.lastIncBit() = path.currentStackPosition();
-         path.lastZeroBit() = path.currentStackPosition()+1;
-         // path.setTrueBitArray(path.currentStackPosition());
-         result = true;
-      };
-      ++path.currentStackPosition();
+  {
+    bool result;
+    if (cond.isConstant(&result))
+      return result;
+    if (multipleTarget) {
+      result = *multipleTarget;
+      *multipleTarget = true;
       return result;
     }
+
+    if (doesFollow) {
+      doesFollow = (path.currentStackPosition() < (int) path.log_base_2() - 1);
+      if (doesFollow) {
+        result = !path.cbitArray(path.currentStackPosition());
+        if (result) {
+          path.lastIncBit() = path.currentStackPosition();
+          path.lastZeroBit() = path.currentStackPosition()+1;
+        }
+      }
+      else {
+        assert(path.cbitArray(path.currentStackPosition()));
+        path.lastLogCases() = 1;
+        path.lastResult() = 0; /* false */
+        // path.setFalseBitArray(path.currentStackPosition());
+        result = false;
+      };
+    }
+    else {
+      path.lastLogCases() = 1;
+      path.lastResult() = 1; /* true */
+      path.lastIncBit() = path.currentStackPosition();
+      path.lastZeroBit() = path.currentStackPosition()+1;
+      // path.setTrueBitArray(path.currentStackPosition());
+      result = true;
+    };
+    ++path.currentStackPosition();
+    return result;
+  }
   
   //   =====================================================================
   //   =             General Purpose Registers access methods              =
   //   =====================================================================
     
-  U32  GetGPR( unsigned idx )
-  {
-    assert(memoryState);
-    if (idx)
-      return U32(memoryState->getRegisterValueAsElement(RegID("at").code + idx), *this);
-    else
-      return U32(0);
-  }
-  
   void addJumpTargetAddress(uint32_t val)
-    {  if (has_set_target) {
-         --target_addresses.addresses_length;
-          if (decisionVector)
-             decisionVector->resetLastTarget(val);
-       }
-       else {
-          if (target_addresses.addresses_length >= target_addresses.addresses_array_size) {
-             int old_size = target_addresses.addresses_array_size;
-             target_addresses.addresses = (*target_addresses.realloc_addresses)(
-                target_addresses.addresses, old_size,
-                &target_addresses.addresses_array_size,
-             target_addresses.address_container);
-          };
-          if (decisionVector)
-             decisionVector->addNewTarget(val);
-       }
-       target_addresses.addresses[target_addresses.addresses_length] = val;
-       ++target_addresses.addresses_length;
-       has_set_target = true;
+  {  if (has_set_target) {
+      --target_addresses.addresses_length;
+      if (decisionVector)
+        decisionVector->resetLastTarget(val);
     }
+    else {
+      if (target_addresses.addresses_length >= target_addresses.addresses_array_size) {
+        int old_size = target_addresses.addresses_array_size;
+        target_addresses.addresses = (*target_addresses.realloc_addresses)(
+                                                                           target_addresses.addresses, old_size,
+                                                                           &target_addresses.addresses_array_size,
+                                                                           target_addresses.address_container);
+      };
+      if (decisionVector)
+        decisionVector->addNewTarget(val);
+    }
+    target_addresses.addresses[target_addresses.addresses_length] = val;
+    ++target_addresses.addresses_length;
+    has_set_target = true;
+  }
   void addCallTargetAddress(uint32_t val)
-    {  addJumpTargetAddress(val); }
+  {  addJumpTargetAddress(val); }
   void addReturnTargetAddress(uint32_t val)
-    {  addJumpTargetAddress(val); }
-
-  enum branch_type_t { B_JMP = 0, B_CALL, B_RET, B_EXC, B_DBG, B_RFE };
-  void SetGPR( unsigned idx, const U32& value )
-  {
-    if (idx)
-      memoryState->setRegisterValue(RegID("r0").code + idx, U32(value), domainFunctions);
-  }
-    
-  U32  GetPC() { return U32(insn_addrs[0]); }
-  void Branch( U32 const& nia, branch_type_t bt )
-  {
-    if (next_targets_queries) {
-      uint32_t val;
-      if (nia.isConstant(&val)) {
-        if (bt == B_CALL)
-          addCallTargetAddress(val);
-        else if (bt == B_RET)
-          addReturnTargetAddress(val);
-        else
-          addJumpTargetAddress(val);
-      }
-      else {
-         // [TODO] forcer les disjonctions + énumérer
-         // pour les dynamic jumps
-      }
-      current_target = val;
-    }
-    else if (decisionVector) {
-      uint32_t val;
-      if (nia.isConstant(&val))
-         current_target = val;
-    }
-  }
-
+  {  addJumpTargetAddress(val); }
 
   struct RegisterAccess {
     RegisterAccess(int registerIndex, Processor& aproc) : proc(&aproc) {}
@@ -1875,15 +1836,15 @@ public:
     RegisterAccess& operator=(const RegisterAccess& source) = default;
 
     RegisterAccess& operator=(const U32& source)
-      {  if (proc)
-            proc->memoryState->setRegisterValue(RegID("fpscr").code, U32(source),
-                  proc->domainFunctions);
-         else
-            val = source;
-         return *this;
-      }
+    {  if (proc)
+        proc->memoryState->setRegisterValue(RegID("fpscr").code, U32(source),
+                                            proc->domainFunctions);
+      else
+        val = source;
+      return *this;
+    }
     operator U32() const
-      {  return proc ? proc->memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("fpscr").code) : val; }
+    {  return proc ? proc->memoryState->getRegisterValueAsMultiBit<uint32_t>(RegID("fpscr").code) : val; }
 
   private:
     U32 val;
@@ -1926,20 +1887,104 @@ public:
   DecisionVector*  decisionVector = nullptr;
   bool             is_verbose = false;
   uint64_t         current_target = 0;
-  uint64_t         insn_addrs[3];
-  uint64_t         branch_address= 0;
-  uint64_t         return_address=0;
+  U32              insn_addrs[3];
+  branch_type_t    branch_type = B_JMP;
 
   void execute(unisim::component::cxx::processor::mips::isa::Operation<Processor>* insn)
   {
     // Fetch
     uint32_t insn_addr = insn->GetAddr();
-    insn_addrs[0] = insn_addr;
-    insn_addrs[1] = 0; /*delay slot*/
-    insn_addrs[2] = insn_addrs[1] + 4;
-    return_address = insn_addr + 8;
+    insn_addrs[0] = U32(insn_addr);
+    insn_addrs[1] = GetU32("npc"); /*delay slot*/
+    insn_addrs[2] = insn_addrs[1] + U32(4);
     insn->execute( *this );
   }
+
+  struct TODO {};
+
+  void SetU32( RegID id, U32 const& value )
+  {
+    assert(memoryState);
+    memoryState->setRegisterValue(id.code + 0/*offset to RegID*/, U32(value), domainFunctions);
+  }
+  U32  GetU32( RegID id )
+  {
+    assert(memoryState);
+    return U32(memoryState->getRegisterValueAsElement(id.code + 0/* offset to RegID*/), *this);
+  }
+  
+  void SetGPR( unsigned idx, const U32& value ) { if (idx) SetU32(RegID("at") + (idx-1), value); }
+  void SetDivU(U32 rs, U32 rt) { SetLO(0, rs / rt); SetHI(0, rs % rt); }
+  void SetHI(unsigned ra, U32 value) { if (ra) throw "nope"; SetU32("hi", value); }
+  void SetLO(unsigned ra, U32 value) { if (ra) throw "nope"; SetU32("lo", value); }
+  
+  U32  GetGPR( unsigned idx ) { if (idx) return GetU32(RegID("at") + (idx-1)); return U32(0); }
+  U32  GetHI(unsigned ra) { if (ra) throw "nope"; return GetU32("hi"); }
+  U32  GetLO(unsigned ra) { if (ra) throw "nope"; return GetU32("lo"); }
+
+  U32  GetHWR(unsigned idx) { throw Unimplemented(); return U32(); }
+  
+  //   =====================================================================
+  //   =                      Control Transfer methods                     =
+  //   =====================================================================
+
+  U32  GetPC() { return insn_addrs[0]; }
+  void process_branches()
+  {
+    // Principle is to look at insn_addrs[2] to tell where instruction
+    // did branched.  Beware that if delay slot is canceled,
+    // insn_addrs[1] will no longer contains initial delay slot but
+    // insn_addrs[2].  May be should use a special state for that
+    // (some kind of is_delay_slot_canceled_p boolean status).
+
+    U32 const& nia = insn_addrs[2];
+    
+    if (next_targets_queries) {
+      uint32_t val;
+      if (nia.isConstant(&val)) {
+        if (branch_type == B_CALL)
+          addCallTargetAddress(val);
+        else if (branch_type == B_RET)
+          addReturnTargetAddress(val);
+        else
+          addJumpTargetAddress(val);
+      }
+      else {
+        // [TODO] forcer les disjonctions + énumérer
+        // pour les dynamic jumps
+      }
+      current_target = val;
+    }
+    else if (decisionVector) {
+      uint32_t val;
+      if (nia.isConstant(&val))
+        current_target = val;
+    }
+  }
+
+  void Branch( U32 const& target, branch_type_t _branch_type ) { insn_addrs[2] = target; branch_type = _branch_type; }
+  void CancelDelaySlot() { insn_addrs[1] = insn_addrs[2]; insn_addrs[2] += U32(4); }
+    
+  void SysCall( unsigned imm ) { throw Unimplemented(); }
+  
+  //   =====================================================================
+  //   =                       Memory access methods                       =
+  //   =====================================================================
+  U32 MemLoad( U32 const&, U32 const& addr ) { throw TODO(); return U32(); }
+  U16 MemLoad( U16 const&, U32 const& addr ) { throw TODO(); return U16(); }
+  U8  MemLoad( U8  const&, U32 const& addr ) { throw TODO(); return  U8(); }
+  S32 MemLoad( S32 const&, U32 const& addr ) { throw TODO(); return S32(); }
+  S16 MemLoad( S16 const&, U32 const& addr ) { throw TODO(); return S16(); }
+  S8  MemLoad( S8  const&, U32 const& addr ) { throw TODO(); return  S8(); }
+  template <class T> T MemRead( U32 const& addr ) { return MemLoad( T(), addr ); }
+  
+  void MemStore( U32 const& addr, U32 const& value ) { throw TODO(); }
+  void MemStore( U32 const& addr, U16 const& value ) { throw TODO(); }
+  void MemStore( U32 const& addr, U8  const& value ) { throw TODO(); }
+  template <typename U> void MemWrite( U32 const& addr, U value ) { return MemStore( addr, value ); }
+    
+  void AtomicBegin(U32 const&) { }
+  BOOL AtomicUpdate(U32 const&) { return BOOL(true); }
 };
 
 inline
@@ -2005,28 +2050,23 @@ struct Translator
       }
       ~Instruction() { delete operation; }
       Operation* operator -> () { return operation; }
+      Operation* get() { return operation; }
       
       Operation* operation;
     };
     
     Instruction instruction( isa, addr, code );
     
-    {
-      uint32_t encoding = instruction->GetEncoding();
-      if (instruction.bytecount == 2)
-        encoding &= 0xffff;
-    }
-    
     // Get actions
     if (state.is_verbose) {
       std::cout << "\texecute instruction 0x" << std::hex << instruction->GetAddr() << std::dec << ':';
-      instruction->disasm(state, std::cout);
+      instruction->disasm(std::cout);
       std::cout << '\n';
     };
     uint32_t next_addr = addr;
     if (!state.next_targets_queries && state.decisionVector) {
        if (!state.decisionVector->isOnLast())
-          next_addr += instruction.bytecount;
+          next_addr += 4;
        else
           next_addr = state.decisionVector->getLastTarget();
     }
@@ -2034,6 +2074,8 @@ struct Translator
     for (bool end = false; not end;)
       {
         state.execute(instruction.get());
+        // state.process_branches();
+        // Either process branches here or in close() which is called next.
         end = state.close();
       }
     if (!state.next_targets_queries)
@@ -2144,12 +2186,12 @@ DLL_API int processor_get_registers_number(struct _Processor* processor)
 DLL_API int processor_get_register_index(struct _Processor* processor,
       const char* name)
 {  int code = Processor::RegID(name).code;
-   if (code == Processor::RegID::end) {
-      code = Processor::SRegID(name).code;
-      if (code == Processor::SRegID::end)
+   if (code == Processor::RegID::end) // {
+      // code = Processor::SRegID(name).code;
+      // if (code == Processor::SRegID::end)
          return -1;
-      return Processor::RegID::end + code;
-   }
+   //    return Processor::RegID::end + code;
+   // }
    return code;
 }
   
@@ -2157,9 +2199,9 @@ DLL_API const char* processor_get_register_name(struct _Processor* processor,
       int register_index)
 {  if (register_index < 0)
       return nullptr;
-   if (register_index >= Processor::RegID::end)
-      return Processor::SRegID((Processor::SRegID::Code)
-            (register_index-Processor::RegID::end)).c_str();
+   // if (register_index >= Processor::RegID::end)
+   //    return Processor::SRegID((Processor::SRegID::Code)
+   //          (register_index-Processor::RegID::end)).c_str();
    return Processor::RegID((Processor::RegID::Code) register_index).c_str();
 }
   
@@ -2196,8 +2238,6 @@ DLL_API bool processor_next_targets(struct _Processor* processor, char* instruct
   unisim::util::endian::ByteSwap(code);
 
   Translator actset( address, code );
-  Processor::StatusRegister& status = actset.status;
-  status.iset = status.Mips;
   DecisionVector* decisionVector = reinterpret_cast<DecisionVector*>(decision_vector);
   decisionVector->setToNextInstruction();
   actset.next_targets(*proc, *target_addresses, *decisionVector);
@@ -2219,8 +2259,6 @@ DLL_API bool processor_interpret(struct _Processor* processor, char* instruction
   unisim::util::endian::ByteSwap(code);
 
   Translator actset( *address, code );
-  Processor::StatusRegister& status = actset.status;
-  status.iset = status.Mips;
   DecisionVector* decisionVector = reinterpret_cast<DecisionVector*>(decision_vector);
   actset.interpret(*proc, *decisionVector);
   *address = actset.addr;
@@ -2228,4 +2266,3 @@ DLL_API bool processor_interpret(struct _Processor* processor, char* instruction
 }
 
 }
-

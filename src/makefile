@@ -14,8 +14,6 @@ $(MIPOBJS): CPPFLAGS+=-Imipselsec
 CXXPPOBJS=$(patsubst %.cpp,$(BUILD)/%.o,$(filter %.cpp,$(ARMSRCS) $(MIPSRCS)))
 CXXCOBJS=$(patsubst %.cc,$(BUILD)/%.o,$(filter %.cc,$(ARMSRCS) $(MIPSRCS)))
 
-to_remove: mipsec_decoder.so
-
 all: check_memory
 
 define COMPILE

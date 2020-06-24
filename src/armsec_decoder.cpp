@@ -1,8 +1,8 @@
 #include "armsec_decoder.h"
-#include "unisim/component/cxx/processor/arm/disasm.hh"
-#include "unisim/component/cxx/processor/arm/psr.hh"
-#include "unisim/util/identifier/identifier.hh"
-#include "unisim/util/likely/likely.hh"
+#include <unisim/component/cxx/processor/arm/disasm.hh>
+#include <unisim/component/cxx/processor/arm/psr.hh>
+#include <unisim/util/identifier/identifier.hh>
+#include <unisim/util/likely/likely.hh>
 #include <functional>
 #include <cmath>
 #include "top_thumb.tcc"
@@ -28,7 +28,7 @@ private:
   bool uLastResult = false;
   bool uLastLogCases = false;
  
-  void clearHigh(int bitPosition)
+  void clearHigh(unsigned bitPosition)
     { assert(0 <= bitPosition && bitPosition<=2*8*sizeof(uint64_t));
       if (bitPosition%(8*sizeof(uint64_t)) > 0)
         auChoice[bitPosition/(8*sizeof(uint64_t))]
@@ -44,17 +44,17 @@ public:
   bool& lastResult() { return uLastResult; }
   bool& lastLogCases() { return uLastLogCases; }
 
-  bool cbitArray(int bitPosition) const
+  bool cbitArray(unsigned bitPosition) const
     { assert(0 <= bitPosition && bitPosition<2*8*sizeof(uint64_t));
       return auChoice[bitPosition/(8*sizeof(uint64_t))]
             & (((uint64_t) 1) << (bitPosition%(8*sizeof(uint64_t))));
     }
-  void setFalseBitArray(int bitPosition)
+  void setFalseBitArray(unsigned bitPosition)
     { assert(0 <= bitPosition && bitPosition<2*8*sizeof(uint64_t));
       auChoice[bitPosition/(8*sizeof(uint64_t))]
            &= ~(((uint64_t) 1) << (bitPosition%(8*sizeof(uint64_t))));
     }
-  void setTrueBitArray(int bitPosition)
+  void setTrueBitArray(unsigned bitPosition)
     { assert(0 <= bitPosition && bitPosition<2*8*sizeof(uint64_t));
       auChoice[bitPosition/(8*sizeof(uint64_t))]
            |= (((uint64_t) 1) << (bitPosition%(8*sizeof(uint64_t))));
@@ -308,7 +308,7 @@ public:
 static char*
 increase_vector_char_buffer_size(char* buffer, int old_length, int new_length, void* awriter)
 {  std::vector<char>* writer = reinterpret_cast<std::vector<char>*>(awriter);
-   assert(&(*writer)[0] == buffer && writer->size() == old_length);
+   assert(&(*writer)[0] == buffer && int(writer->size()) == old_length);
    writer->insert(writer->end(), new_length-old_length, '\0');
    return &(*writer)[0];
 }
@@ -458,7 +458,7 @@ public:
     }
 
   DomainBitValue operator~() const
-    { return applyUnary(DBUONegate, [](bool val) { return ~val; }); }
+    { return applyUnary(DBUONegate, [](bool val) { return !val; }); }
   DomainBitValue operator!() const
     { return applyUnary(DBUONegate, [](bool val) { return !val; }); }
   DomainBitValue operator|(const DomainBitValue& source) const
@@ -1038,7 +1038,7 @@ public:
     {
       if (first.inherited::isValid())
       { DomainMultiBitValue result = first;
-        for (int index = 0; index < sizeof(VALUE_TYPE)/2; ++index) {
+        for (int index = 0; index < int(sizeof(VALUE_TYPE)/2); ++index) {
           DomainMultiBitValue first_source(first), last_source(first);
           first_source.reduce(index*8+0, index*8+7);
           last_source.reduce((sizeof(VALUE_TYPE)-index-1)*8+0, (sizeof(VALUE_TYPE)-index)*8-1);
@@ -1977,10 +1977,12 @@ public:
       RLEnd = RLNeonRegs
     };
   Processor()
-     :  cpsr(*this, StatusRegister()), FPSCR(*this), FPEXC(*this), is_it_assigned(false),
-        mode(), unpredictable(false),
-        domainEnvironment(), domainFunctions{}, interpretParameters(nullptr),
-        memoryState(nullptr), memoryFunctions(), next_targets_queries{}, target_addresses{} {}
+    : domainEnvironment(), domainFunctions{}, interpretParameters(nullptr)
+    , memoryState(nullptr), memoryFunctions()
+    , cpsr(*this, StatusRegister()), FPSCR(*this), FPEXC(*this), is_it_assigned(false)
+    , mode(), unpredictable(false)
+    , next_targets_queries{}, target_addresses{}
+  {}
 
   void setMemoryFunctions(struct _MemoryModelFunctions& functions) { memoryFunctions = functions; }
   void setDomainFunctions(struct _DomainElementFunctions& functions) { domainFunctions = functions; }
@@ -2051,7 +2053,7 @@ public:
       }
 
       if (doesFollow) {
-        doesFollow = (path.currentStackPosition() < (int) path.log_base_2() - 1);
+        doesFollow = (path.currentStackPosition() < unsigned(path.log_base_2() - 1));
         if (doesFollow) {
           result = !path.cbitArray(path.currentStackPosition());
           if (result) {
@@ -3199,7 +3201,7 @@ Processor::PSR::SetBits( U32 const& bits, uint32_t mask )
         mask &= (~0UL << 1);
       }
       else
-        mask == 0;
+        mask = 0;
       if (mask != 0) {
         int packet_newpos = unisim::util::arithmetic::BitScanForward(mask);
         if (packet_newpos > 0)

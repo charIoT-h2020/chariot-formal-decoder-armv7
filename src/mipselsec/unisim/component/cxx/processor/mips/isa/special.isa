@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2013,
+ *  Copyright (c) 2019-2020,
  *  Commissariat a l'Energie Atomique (CEA)
  *  All rights reserved.
  *
@@ -29,72 +29,32 @@
  *  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *  EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
- * Authors: Gilles Mouchard (gilles.mouchard@cea.fr)
+ * Authors: Yves Lhuillier (yves.lhuillier@cea.fr)
  */
 
-#include <unisim/util/lexer/lexer.hh>
-#include <unisim/util/dictionary/dictionary.tcc>
-#include <iostream>
+/**** C0 ***/
 
-namespace unisim {
-namespace util {
-namespace dictionary {
+op tlbr(16[6]:1[1]:0x01[25]);
+tlbr.disasm = { sink << "tlbr"; };
 
-template class DictionaryEntry<unsigned int>;
-template class Dictionary<unsigned int>;
+op tlbwi(16[6]:1[1]:0x02[25]);
+tlbwi.disasm = { sink << "tlbwi"; };
 
-} // end of namespace lexer
-} // end of namespace util
-} // end of namespace dictionary
+op tlbwr(16[6]:1[1]:0x06[25]);
+tlbwr.disasm = { sink << "tlbwr"; };
 
-namespace unisim {
-namespace util {
-namespace lexer {
+op tlbp(16[6]:1[1]:0x08[25]);
+tlbp.disasm = { sink << "tlbp"; };
 
-Location::Location()
-	: filename()
-	, lineno(1)
-	, colno(1)
-{
-}
+op eret(16[6]:1[1]:0x18[25]);
+eret.disasm = { sink << "eret"; };
 
-void Location::IncLineNo(unsigned int delta)
-{
-	lineno += delta;
-	colno = 1;
-}
+op wait(16[6]:1[1]:0x20[25]);
+wait.disasm = { sink << "wait"; };
 
-void Location::IncColNo(unsigned int delta)
-{
-	colno += delta;
-}
+{false}:                                        \
+op sync_p(0x0000040f[32]);
+sync_p.disasm = { sink << "sync.p"; };
 
-void Location::SetFilename(const char *_filename)
-{
-	filename = _filename;
-}
-
-const char *Location::GetFilename() const
-{
-	return filename.c_str();
-}
-
-unsigned int Location::GetLineNo() const
-{
-	return lineno;
-}
-
-unsigned int Location::GetColNo() const
-{
-	return colno;
-}
-
-std::ostream& operator << (std::ostream& os, const Location& loc)
-{
-	if(!loc.filename.empty()) os << "File \"" << loc.filename << "\", ";
-	return os << "line #" << loc.lineno << ", col #" << loc.colno;
-}
-
-} // end of namespace lexer
-} // end of namespace util
-} // end of namespace unisim
+op pause(0[6]:0[5]:0[5]:0[5]:5[5]:0x00[6]);
+pause.disasm = { sink << "pause"; };

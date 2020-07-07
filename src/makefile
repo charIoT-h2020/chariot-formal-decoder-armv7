@@ -2,14 +2,16 @@ CPPFLAGS=-I.
 CXXFLAGS=-O2 -g3 -fPIC 
 BUILD=build
 
+all: armsec_decoder.so mipsec_decoder.so
+
 ARMSRCS=armsec_decoder.cpp armsec/unisim/component/cxx/processor/arm/disasm.cc
 ARMOBJS=$(patsubst %,$(BUILD)/%.o,$(basename $(ARMSRCS)))
 
-MIPSRCS=mipsec_decoder.cpp
-MIPOBJS=$(patsubst %,$(BUILD)/%.o,$(basename $(MIPSRCS)))
+MIPSRCS=mipsec_decoder.cpp mipselsec/unisim/component/cxx/processor/mips/isa/disasm.cc
+MIPSOBJS=$(patsubst %,$(BUILD)/%.o,$(basename $(MIPSRCS)))
 
 $(ARMOBJS): CPPFLAGS+=-Iarmsec
-$(MIPOBJS): CPPFLAGS+=-Imipselsec
+$(MIPSOBJS): CPPFLAGS+=-Imipselsec
 
 CXXPPOBJS=$(patsubst %.cpp,$(BUILD)/%.o,$(filter %.cpp,$(ARMSRCS) $(MIPSRCS)))
 CXXCOBJS=$(patsubst %.cc,$(BUILD)/%.o,$(filter %.cc,$(ARMSRCS) $(MIPSRCS)))
@@ -30,8 +32,8 @@ $(CXXPPOBJS): $(BUILD)/%.o: %.cpp
 armsec_decoder.so: $(ARMOBJS)
 	g++ -shared -o $@ $(ARMOBJS)
 
-mipsec_decoder.so: $(MIPOBJS)
-	g++ -shared -o $@ $(ARMOBJS)
+mipsec_decoder.so: $(MIPSOBJS)
+	g++ -shared -o $@ $(MIPSOBJS)
 
 check_memory: check_memory.cc dll.cc armsec_decoder.so
 	g++ -O0 -g check_memory.cc dll.cc armsec_decoder.so -ldl -o check_memory -Wl,-rpath .

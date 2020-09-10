@@ -72,32 +72,35 @@ typedef struct _TargetAddresses {
 
 struct _DecisionVector;
 
-DLL_API struct _Processor* create_processor();
-DLL_API void set_domain_functions(struct _Processor* processor, struct _DomainElementFunctions* functionTable);
-DLL_API struct _DomainElementFunctions* get_domain_functions(struct _Processor* aprocessor);
-DLL_API void initialize_memory(struct _Processor* processor, MemoryModel* memory,
-      MemoryModelFunctions* memory_functions, InterpretParameters* parameters);
-DLL_API void processor_set_verbose(struct _Processor* processor);
-DLL_API void free_processor(struct _Processor* processor);
+typedef struct _ProcessorFunctions {
 
-DLL_API int processor_get_registers_number(struct _Processor* processor);
-DLL_API int processor_get_register_index(struct _Processor* processor,
-      const char* name);
-DLL_API const char* processor_get_register_name(struct _Processor* processor,
-      int register_index);
-DLL_API struct _DecisionVector* processor_create_decision_vector(struct _Processor* processor);
-DLL_API struct _DecisionVector* processor_clone_decision_vector(struct _DecisionVector* decision_vector);
-DLL_API void processor_filter_decision_vector(struct _DecisionVector* decision_vector, uint64_t target);
-DLL_API void processor_free_decision_vector(struct _DecisionVector* decision_vector);
-DLL_API bool processor_next_targets(struct _Processor* processor, char* instruction_buffer,
-      size_t buffer_size, uint64_t address, TargetAddresses* target_addresses,
-      MemoryModel* memory, MemoryModelFunctions* memory_functions,
-      struct _DecisionVector* decision_vector, InterpretParameters* parameters);
+   struct _Processor* (*create_processor)();
+   void (*set_domain_functions)(struct _Processor* processor, struct _DomainElementFunctions* functionTable);
+   struct _DomainElementFunctions* (*get_domain_functions)(struct _Processor* processor);
+   void (*initialize_memory)(struct _Processor* processor, MemoryModel* memory,
+         MemoryModelFunctions* memory_functions, InterpretParameters* parameters);
+   void (*set_verbose)(struct _Processor* processor);
+   void (*free_processor)(struct _Processor* processor);
+   int (*get_registers_number)(struct _Processor* processor);
+   int (*get_register_index)(struct _Processor* processor, const char* name);
+   const char* (*get_register_name)(struct _Processor* processor, int register_index);
+   struct _DecisionVector* (*create_decision_vector)(struct _Processor* processor);
+   struct _DecisionVector* (*clone_decision_vector)(struct _DecisionVector* decision_vector);
+   void (*free_decision_vector)(struct _DecisionVector* decision_vector);
+   void (*filter_decision_vector)(struct _DecisionVector* decision_vector, uint64_t address);
 
-DLL_API bool processor_interpret(struct _Processor* processor, char* instruction_buffer,
-      size_t buffer_size, uint64_t* address, uint64_t target_address,
-      MemoryModel* memory, MemoryModelFunctions* memory_functions,
-      struct _DecisionVector* decision_vector, InterpretParameters* parameters);
+   bool (*processor_next_targets)(struct _Processor* processor, char* instruction_buffer,
+         size_t buffer_size, uint64_t address, struct _TargetAddresses* target_addresses,
+         MemoryModel* memory, MemoryModelFunctions* memory_functions,
+         struct _DecisionVector* decision_vector, InterpretParameters* parameters);
+   bool (*processor_interpret)(struct _Processor* processor, char* instruction_buffer,
+         size_t buffer_size, uint64_t* address, uint64_t target_address,
+         MemoryModel* memory, MemoryModelFunctions* memory_functions,
+         struct _DecisionVector* decision_vector, InterpretParameters* parameters);
+
+} ProcessorFunctions;
+
+DLL_API uint64_t init_processor_functions(struct _ProcessorFunctions* functions);
 
 #ifdef __cplusplus
 }

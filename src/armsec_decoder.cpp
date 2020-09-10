@@ -1405,12 +1405,12 @@ class MemoryState {
       }
 
    DomainElement getRegisterValueAsElement(int registerIndex) const
-      {  DomainElementFunctions* domainFunctions = nullptr;
+      {  struct _DomainElementFunctions* domainFunctions = nullptr;
          return (*pfFunctions->get_register_value)
                (pmModel, registerIndex, pParameters, &uErrors, &domainFunctions);
       }
    DomainBitValue getRegisterValueAsBit(int registerIndex) const
-      {  DomainElementFunctions* domainFunctions = nullptr; 
+      {  struct _DomainElementFunctions* domainFunctions = nullptr; 
          DomainElement result = (*pfFunctions->get_register_value)
                (pmModel, registerIndex, pParameters, &uErrors, &domainFunctions);
          DomainMultiBitValue<char> res(std::move(result), domainFunctions, peDomainEnv); 
@@ -1418,13 +1418,13 @@ class MemoryState {
       }
    template <typename TypeInt>
    DomainMultiBitValue<TypeInt> getRegisterValueAsMultiBit(int registerIndex) const
-      {  DomainElementFunctions* domainFunctions = nullptr; 
+      {  struct _DomainElementFunctions* domainFunctions = nullptr; 
          DomainElement result = (*pfFunctions->get_register_value)
                (pmModel, registerIndex, pParameters, &uErrors, &domainFunctions);
          return DomainMultiBitValue<TypeInt>(std::move(result), domainFunctions, peDomainEnv);
       }
    // DomainMultiFloatValue getRegisterValueAsMultiFloat(int registerIndex) const
-   //    {  DomainElementFunctions* domainFunctions = nullptr; 
+   //    {  struct _DomainElementFunctions* domainFunctions = nullptr; 
    //       DomainElement result = (*pfFunctions->get_register_value)
    //             (pmModel, registerIndex, pParameters, &uErrors, &domainFunctions);
    //       return DomainMultiFloatValue(std::move(result), domainFunctions, peDomainEnv);
@@ -1433,7 +1433,7 @@ class MemoryState {
    template <class IntType>
    DomainMultiBitValue<IntType> loadMultiBitValue(
          const DomainMultiBitValue<uint32_t>& indirectAddress) const
-      {  DomainElementFunctions* domainFunctions = nullptr; 
+      {  struct _DomainElementFunctions* domainFunctions = nullptr; 
          DomainElement result = (*pfFunctions->load_multibit_value)
                (pmModel, indirectAddress.value(), sizeof(IntType), pParameters, &uErrors,
                 &domainFunctions);
@@ -1442,7 +1442,7 @@ class MemoryState {
    template <class IntType>
    DomainMultiBitValue<IntType> loadMultiBitDisjunctionValue(
          DomainMultiBitValue<uint32_t>&& indirectAddress) const
-      {  DomainElementFunctions* domainFunctions = nullptr; 
+      {  struct _DomainElementFunctions* domainFunctions = nullptr; 
          DomainElement result = (*pfFunctions->load_multibit_disjunctive_value)
                (pmModel, indirectAddress.value(), sizeof(IntType), pParameters, &uErrors,
                 &domainFunctions);
@@ -1451,7 +1451,7 @@ class MemoryState {
    template <class FloatType>
    DomainMultiFloatValue<FloatType> loadMultiFloatValue(
          DomainMultiBitValue<uint32_t>&& indirectAddress) const
-      {  DomainElementFunctions* domainFunctions = nullptr; 
+      {  struct _DomainElementFunctions* domainFunctions = nullptr; 
          DomainElement result = (*pfFunctions->load_multifloat_value)
                (pmModel, indirectAddress.value(), sizeof(FloatType), pParameters, &uErrors,
                 &domainFunctions);
@@ -3382,39 +3382,39 @@ struct Translator
   
 extern "C" {
 
-DLL_API struct _Processor* create_processor()
+struct _Processor* armv7_create_processor()
 {  debugPrint((DomainValue*) nullptr);
    return reinterpret_cast<struct _Processor*>(new Processor());
 }
 
-DLL_API void set_domain_functions(struct _Processor* aprocessor, struct _DomainElementFunctions* functionTable)
+void armv7_set_domain_functions(struct _Processor* aprocessor, struct _DomainElementFunctions* functionTable)
 {  auto* processor = reinterpret_cast<Processor*>(aprocessor);
    processor->setDomainFunctions(*functionTable);
 }
 
-DLL_API struct _DomainElementFunctions* get_domain_functions(
+struct _DomainElementFunctions* armv7_get_domain_functions(
       struct _Processor* aprocessor)
 {  auto* processor = reinterpret_cast<Processor*>(aprocessor);
    return &processor->getDomainFunctions();
 }
 
-DLL_API void initialize_memory(struct _Processor* aprocessor, MemoryModel* memory,
+void armv7_initialize_memory(struct _Processor* aprocessor, MemoryModel* memory,
       MemoryModelFunctions* memory_functions, InterpretParameters* parameters)
 {  auto* processor = reinterpret_cast<Processor*>(aprocessor);
    MemoryState memoryState(memory, memory_functions, parameters);
    memoryState.initializeThumbMemory(processor->getDomainFunctions());
 }
 
-DLL_API void processor_set_verbose(struct _Processor* processor)
+void armv7_set_verbose(struct _Processor* processor)
 {  if (processor) reinterpret_cast<Processor*>(processor)->setVerbose(); }
 
-DLL_API void free_processor(struct _Processor* processor)
+void armv7_free_processor(struct _Processor* processor)
 {  delete reinterpret_cast<Processor*>(processor); }
 
-DLL_API int processor_get_registers_number(struct _Processor* processor)
+int armv7_get_registers_number(struct _Processor* processor)
 {  return Processor::RLEnd; }
 
-DLL_API int processor_get_register_index(struct _Processor* processor,
+int armv7_get_register_index(struct _Processor* processor,
       const char* name)
 {  int code = Processor::RegID(name).code;
    if (code == Processor::RegID::end) {
@@ -3426,7 +3426,7 @@ DLL_API int processor_get_register_index(struct _Processor* processor,
    return code;
 }
   
-DLL_API const char* processor_get_register_name(struct _Processor* processor,
+const char* armv7_get_register_name(struct _Processor* processor,
       int register_index)
 {  if (register_index < 0)
       return nullptr;
@@ -3436,25 +3436,25 @@ DLL_API const char* processor_get_register_name(struct _Processor* processor,
    return Processor::RegID((Processor::RegID::Code) register_index).c_str();
 }
   
-DLL_API struct _DecisionVector* processor_create_decision_vector(struct _Processor* processor)
+struct _DecisionVector* armv7_create_decision_vector(struct _Processor* processor)
 {  return reinterpret_cast<struct _DecisionVector*>(new DecisionVector()); }
 
-DLL_API struct _DecisionVector* processor_clone_decision_vector(struct _DecisionVector* decision_vector)
+struct _DecisionVector* armv7_clone_decision_vector(struct _DecisionVector* decision_vector)
 {  return reinterpret_cast<struct _DecisionVector*>(new DecisionVector(
          *reinterpret_cast<DecisionVector*>(decision_vector)));
 }
 
-DLL_API void processor_free_decision_vector(struct _DecisionVector* decision_vector)
+void armv7_free_decision_vector(struct _DecisionVector* decision_vector)
 {  delete reinterpret_cast<DecisionVector*>(decision_vector); }
 
-DLL_API void processor_filter_decision_vector(struct _DecisionVector* decision_vector,
+void armv7_filter_decision_vector(struct _DecisionVector* decision_vector,
       uint64_t target)
 {  auto* decisionVector = reinterpret_cast<DecisionVector*>(decision_vector);
    decisionVector->setToLastInstruction();
    decisionVector->filter(target);
 }
 
-DLL_API bool processor_next_targets(struct _Processor* processor, char* instruction_buffer,
+bool armv7_next_targets(struct _Processor* processor, char* instruction_buffer,
       size_t buffer_size, uint64_t address, TargetAddresses* target_addresses,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,
       struct _DecisionVector* decision_vector, InterpretParameters* parameters) {
@@ -3477,7 +3477,7 @@ DLL_API bool processor_next_targets(struct _Processor* processor, char* instruct
   return true;
 }
 
-DLL_API bool processor_interpret(struct _Processor* processor, char* instruction_buffer,
+bool armv7_interpret(struct _Processor* processor, char* instruction_buffer,
       size_t buffer_size, uint64_t* address, uint64_t target_address,
       MemoryModel* memory, MemoryModelFunctions* memory_functions,
       struct _DecisionVector* decision_vector, InterpretParameters* parameters) {
@@ -3500,5 +3500,26 @@ DLL_API bool processor_interpret(struct _Processor* processor, char* instruction
   return decisionVector->isEmpty();
 }
 
+DLL_API uint64_t init_processor_functions(struct _ProcessorFunctions* functions)
+  {
+    functions->create_processor = &armv7_create_processor;
+    functions->set_domain_functions = &armv7_set_domain_functions;
+    functions->get_domain_functions = &armv7_get_domain_functions;
+    functions->initialize_memory = &armv7_initialize_memory;
+    functions->set_verbose = &armv7_set_verbose;
+    functions->free_processor = &armv7_free_processor;
+    functions->get_registers_number = &armv7_get_registers_number;
+    functions->get_register_index = &armv7_get_register_index;
+    functions->get_register_name = &armv7_get_register_name;
+    functions->create_decision_vector = &armv7_create_decision_vector;
+    functions->clone_decision_vector = &armv7_clone_decision_vector;
+    functions->free_decision_vector = &armv7_free_decision_vector;
+    functions->filter_decision_vector = &armv7_filter_decision_vector;
+    functions->processor_next_targets = &armv7_next_targets;
+    functions->processor_interpret = &armv7_interpret;
+
+    return 1;
+  }
+  
 }
 

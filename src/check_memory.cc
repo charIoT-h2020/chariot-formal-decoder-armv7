@@ -295,7 +295,7 @@ class MemoryState {
    static DomainElement get_register_value(MemoryModel* amemory,
          int registerIndex, InterpretParameters* parameters,
          unsigned* error /* set of MemoryEvaluationErrorFlags */,
-         DomainElementFunctions** elementFunctions)
+         struct _DomainElementFunctions** elementFunctions)
       {  MemoryState* memory = reinterpret_cast<MemoryState*>(amemory);
          DomainValue result = memory->mvRegisters[registerIndex];
          if (result.isValid())
@@ -312,7 +312,7 @@ class MemoryState {
 
    static DomainElement load_multibit_value(MemoryModel* amemory,
          DomainElement indirect_address, size_t size, InterpretParameters* parameters,
-         unsigned* error, DomainElementFunctions** elementFunctions)
+         unsigned* error, struct _DomainElementFunctions** elementFunctions)
       {  MemoryState* memory = reinterpret_cast<MemoryState*>(amemory);
          DomainValue address((*memory->domainFunctions.clone)(indirect_address), &memory->domainFunctions);
          DomainValue result(memory->domainFunctions.multibit_create_top(size, true /* isSymbolic */), &memory->domainFunctions);
@@ -324,7 +324,7 @@ class MemoryState {
       }
    static DomainElement load_multibit_disjunctive_value(MemoryModel* amemory,
          DomainElement indirect_address, size_t size, InterpretParameters* parameters,
-         unsigned* error, DomainElementFunctions** elementFunctions)
+         unsigned* error, struct _DomainElementFunctions** elementFunctions)
       {  MemoryState* memory = reinterpret_cast<MemoryState*>(amemory);
          DomainValue address((*memory->domainFunctions.clone)(indirect_address), &memory->domainFunctions);
          DomainValue result(memory->domainFunctions.multibit_create_top(size, true /* isSymbolic */), &memory->domainFunctions);
@@ -336,7 +336,7 @@ class MemoryState {
       }
    static DomainElement load_multifloat_value(MemoryModel* amemory,
          DomainElement indirect_address, size_t size, InterpretParameters* parameters,
-         unsigned* error, DomainElementFunctions** elementFunctions)
+         unsigned* error, struct _DomainElementFunctions** elementFunctions)
       {  MemoryState* memory = reinterpret_cast<MemoryState*>(amemory);
          DomainValue address((*memory->domainFunctions.clone)(indirect_address), &memory->domainFunctions);
          DomainValue result(memory->domainFunctions.multifloat_create_top(size, true /* isSymbolic */), &memory->domainFunctions);
@@ -513,6 +513,8 @@ MemoryModelFunctions MemoryState::functions={
    nullptr /* &MemoryState::constraint_address */
 };
 
+struct _ProcessorFunctions armv7_functions{};
+
 class DecisionVector {
   private:
    struct _DecisionVector* pvContent;
@@ -522,10 +524,10 @@ class DecisionVector {
    DecisionVector(DecisionVector&& source)
       : pvContent(source.pvContent) { source.pvContent = nullptr; }
    DecisionVector(const DecisionVector& source)
-      : pvContent(processor_clone_decision_vector(source.pvContent)) {}
-   ~DecisionVector() { if (pvContent) { processor_free_decision_vector(pvContent); pvContent = nullptr; } }
+      : pvContent((*armv7_functions.clone_decision_vector)(source.pvContent)) {}
+   ~DecisionVector() { if (pvContent) { (*armv7_functions.free_decision_vector)(pvContent); pvContent = nullptr; } }
    void filter(uint64_t address)
-      {  processor_filter_decision_vector(pvContent, address); }
+      {  (*armv7_functions.filter_decision_vector)(pvContent, address); }
    struct _DecisionVector* getContent() const { return pvContent; }
 };
 
@@ -551,11 +553,11 @@ class Processor {
    Processor(struct _Processor* content) : pvContent(content) {}
    Processor(Processor&& source) : pvContent(source.pvContent)
       {  source.pvContent = nullptr; }
-   ~Processor() { free_processor(pvContent); }
+   ~Processor() { (*armv7_functions.free_processor)(pvContent); }
 
-   DecisionVector createDecisionVector() const { return DecisionVector(processor_create_decision_vector(pvContent)); }
+   DecisionVector createDecisionVector() const { return DecisionVector((*armv7_functions.create_decision_vector)(pvContent)); }
    void setDomainFunctions(struct _DomainElementFunctions* functions)
-      {  set_domain_functions(pvContent, functions); }
+      {  (*armv7_functions.set_domain_functions)(pvContent, functions); }
    std::vector<uint64_t> nextTargets(char* nextInstruction, int length, uint64_t address,
          const MemoryState& memoryState, const DecisionVector& decisionVector,
          MemoryInterpretParameters& parameters)
@@ -569,7 +571,7 @@ class Processor {
          argument.realloc_addresses = &reallocAddresses;
          argument.address_container = &result;
          MemoryState memory(memoryState);
-         bool isValid = processor_next_targets(pvContent, nextInstruction, length, address,
+         bool isValid = (*armv7_functions.processor_next_targets)(pvContent, nextInstruction, length, address,
                &argument, reinterpret_cast<MemoryModel*>(&memory), memory.getFunctions(),
                decisionVector.getContent(), reinterpret_cast<InterpretParameters*>(&parameters));
          assert(isValid);
@@ -581,7 +583,7 @@ class Processor {
          uint64_t targetAddress, MemoryState& memoryState,
          const DecisionVector& decisionVector,
          MemoryInterpretParameters& parameters)
-      {  bool isValid = processor_interpret(pvContent, instruction, length, &address, targetAddress,
+      {  bool isValid = (*armv7_functions.processor_interpret)(pvContent, instruction, length, &address, targetAddress,
                reinterpret_cast<MemoryModel*>(&memoryState), memoryState.getFunctions(),
                decisionVector.getContent(), reinterpret_cast<InterpretParameters*>(&parameters));
          assert(isValid);
@@ -590,7 +592,7 @@ class Processor {
 
 inline void
 MemoryState::initializeMemory(Processor& proc, MemoryInterpretParameters& parameters)
-   {  initialize_memory(proc.pvContent, reinterpret_cast<MemoryModel*>(this), &functions,
+   {  (*armv7_functions.initialize_memory)(proc.pvContent, reinterpret_cast<MemoryModel*>(this), &functions,
          reinterpret_cast<InterpretParameters*>(&parameters));
    }
 
@@ -606,7 +608,9 @@ int main(int argc, char** argv) {
       return 0;
    };
 
-   Processor processor(create_processor());
+   init_processor_functions(&armv7_functions);
+
+   Processor processor((*armv7_functions.create_processor)());
    MemoryState memoryState;
    MemoryInterpretParameters parameters;
    bool ok = memoryState.loadDomain(processArgument.hasDomain() ? processArgument.getDomain() : "domsec.so");
